@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/redact"]
+resolver = "2"
+
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.9"
+regex = "1"
+shell-words = "1"
+anyhow = "1"
+thiserror = "1"
+tempfile = "3"
