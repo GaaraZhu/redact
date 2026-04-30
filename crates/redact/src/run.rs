@@ -1,6 +1,6 @@
+use serde_json::{json, Value};
 use std::io::Write;
 use std::process::{Command, Stdio};
-use serde_json::{json, Value};
 
 use crate::redactor;
 

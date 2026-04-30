@@ -5,7 +5,10 @@ mod redactor;
 mod run;
 
 #[derive(Parser)]
-#[command(name = "redact", about = "PII-filtering proxy for AI agent query tools")]
+#[command(
+    name = "redact",
+    about = "PII-filtering proxy for AI agent query tools"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

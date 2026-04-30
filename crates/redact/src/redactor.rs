@@ -25,8 +25,7 @@ fn patterns() -> &'static [Pattern] {
             },
             Pattern {
                 name: "phone",
-                regex: Regex::new(r"\b(\+1[\s.]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b")
-                    .unwrap(),
+                regex: Regex::new(r"\b(\+1[\s.]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b").unwrap(),
                 confidence: 0.70,
             },
         ]
@@ -175,7 +174,11 @@ fn luhn(digits: &[u32]) -> bool {
         .map(|(i, &d)| {
             if i % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }

@@ -1,5 +1,5 @@
-use std::io::{self, Read};
 use serde_json::{json, Value};
+use std::io::{self, Read};
 
 const INTERCEPTED_TOOLS: &[&str] = &["tkpsql", "tkdbr", "mysql", "psql"];
 
@@ -22,7 +22,9 @@ fn process(stdin: &str) -> Option<String> {
         .and_then(|c| c.as_str())?
         .to_string();
 
-    let tokens = shell_words::split(&command).ok().filter(|t| !t.is_empty())?;
+    let tokens = shell_words::split(&command)
+        .ok()
+        .filter(|t| !t.is_empty())?;
 
     let basename = std::path::Path::new(&tokens[0])
         .file_name()
@@ -42,7 +44,10 @@ fn process(stdin: &str) -> Option<String> {
     // Rewrite: preserve all tool_input fields, replace command
     let mut updated_input = hook_input["tool_input"].clone();
     if let Some(obj) = updated_input.as_object_mut() {
-        obj.insert("command".to_string(), json!(format!("redact run -- {}", command)));
+        obj.insert(
+            "command".to_string(),
+            json!(format!("redact run -- {}", command)),
+        );
     }
 
     Some(
@@ -114,7 +119,9 @@ mod tests {
         let out = process(&make_input("psql -c 'SELECT phone FROM contacts'")).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(
-            v["hookSpecificOutput"]["permissionDecision"].as_str().unwrap(),
+            v["hookSpecificOutput"]["permissionDecision"]
+                .as_str()
+                .unwrap(),
             "allow"
         );
     }
