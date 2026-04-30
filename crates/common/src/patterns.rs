@@ -27,22 +27,22 @@ pub const BUILTIN_PATTERNS: &[BuiltinPattern] = &[
     BuiltinPattern {
         name: "email",
         regex: r"(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b",
-        confidence: 0.85,
+        confidence: 0.95,
     },
     BuiltinPattern {
         name: "ssn",
         regex: r"\b\d{3}-\d{2}-\d{4}\b",
-        confidence: 0.95,
+        confidence: 0.90,
     },
     BuiltinPattern {
         name: "phone",
-        regex: r"\b(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b",
-        confidence: 0.75,
+        regex: r"\b(\+?1[\s.-]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b",
+        confidence: 0.70,
     },
     BuiltinPattern {
-        name: "credit_card",
-        regex: r"\b(?:\d[ -]?){13,16}\b",
-        confidence: 0.7,
+        name: "ip",
+        regex: r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
+        confidence: 0.60,
     },
 ];
 
@@ -63,11 +63,38 @@ impl CompiledPattern {
             })
             .collect()
     }
+
+    /// Build compiled patterns from builtins, overlaying any user-supplied overrides.
+    /// User patterns with the same name as a builtin replace that builtin.
+    /// User patterns with new names are appended.
+    pub fn from_config(
+        user_patterns: &std::collections::HashMap<String, crate::config::Pattern>,
+    ) -> Vec<Self> {
+        let mut patterns = Self::from_builtins();
+        for (name, user_pat) in user_patterns {
+            let regex = match Regex::new(&user_pat.regex) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            if let Some(existing) = patterns.iter_mut().find(|p| &p.name == name) {
+                existing.regex = regex;
+                existing.confidence = user_pat.confidence;
+            } else {
+                patterns.push(CompiledPattern {
+                    name: name.clone(),
+                    regex,
+                    confidence: user_pat.confidence,
+                });
+            }
+        }
+        patterns
+    }
 }
 
 pub struct Luhn;
 
 impl Luhn {
+    /// Returns true if the string passes the Luhn check and has 13–19 digits.
     pub fn check(s: &str) -> bool {
         let digits: Vec<u32> = s
             .chars()

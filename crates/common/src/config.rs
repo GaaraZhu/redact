@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::patterns::COLUMN_DENYLIST;
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
@@ -17,6 +19,7 @@ pub struct ToolConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PiiConfig {
+    /// Additional column names beyond the built-in denylist. Use `effective_column_names()` to get the merged set.
     #[serde(default)]
     pub column_names: Vec<String>,
     #[serde(default)]
@@ -47,8 +50,8 @@ pub enum Action {
 #[derive(Debug, Deserialize, Serialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum WildcardPolicy {
-    Warn,
     #[default]
+    Warn,
     Reject,
 }
 
@@ -86,16 +89,33 @@ impl Default for PiiConfig {
     }
 }
 
+impl PiiConfig {
+    /// Returns the merged column denylist: built-in defaults union user-supplied additions.
+    /// All names are lowercased. Order: builtins first, then user additions not already present.
+    pub fn effective_column_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = COLUMN_DENYLIST.iter().map(|s| s.to_string()).collect();
+        for name in &self.column_names {
+            let lower = name.to_lowercase();
+            if !names.iter().any(|n| n == &lower) {
+                names.push(lower);
+            }
+        }
+        names
+    }
+}
+
 impl Config {
     pub fn load() -> Result<Self> {
-        let path = config_path()?;
+        Self::load_from_path(&config_path()?)
+    }
+
+    pub(crate) fn load_from_path(path: &std::path::Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let contents = std::fs::read_to_string(&path)?;
-        let config: Config = serde_yaml::from_str(&contents)
-            .map_err(|e| anyhow::anyhow!("Failed to parse config at {}: {}", path.display(), e))?;
-        Ok(config)
+        let contents = std::fs::read_to_string(path)?;
+        serde_yaml::from_str(&contents)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config at {}: {}", path.display(), e))
     }
 }
 
