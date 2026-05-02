@@ -11,7 +11,7 @@ PII-filtering CLI that transparently intercepts AI agent query commands and reda
 ## Current step
 
 Milestone: Milestone 6 — Polish & ship
-Step: 31–35
+Step: 31–35 (complete — pending tag)
 
 Status:
 - [x] Prototype complete
@@ -20,12 +20,12 @@ Status:
 - [x] Milestone 3 complete (Gate 1 tokenizer + column extractor + build_plan — 43 tests)
 - [x] Milestone 4 complete (redact run pipeline + integration tests — 119 tests pass)
 - [x] Milestone 5 complete (hook config-driven + init + config_cmd + list + validate — 154 tests pass)
+- [x] Milestone 6 complete (README, error audit, criterion benchmark 25ms<100ms NFR, smoke test)
 
 Notes:
 `crates/redact/src/run.rs` is the production Gate 1 + Gate 2 pipeline. Loads config,
 runs gate1::extract_columns + gate1::build_plan on the SQL arg, spawns the subprocess,
-pipes stdout through common::redactor::redact. Subcommand stubs for Init/Config/List/
-Validate are in place with correct harness gating but not yet fully implemented.
+pipes stdout through common::redactor::redact. All subcommands fully implemented.
 
 ## Repository structure
 

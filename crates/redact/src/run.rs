@@ -7,12 +7,14 @@ use gate1::{build_plan, extract_columns};
 
 pub fn run(args: Vec<String>) {
     if args.is_empty() {
-        exit_with_error("redact run: no command specified");
+        exit_with_error("redact run: no command specified. Usage: redact run -- <tool> [args...]");
     }
 
     let config = match Config::load() {
         Ok(c) => c,
-        Err(e) => exit_with_error(&format!("failed to load config: {e}")),
+        Err(e) => exit_with_error(&format!(
+            "failed to load config: {e}. Run `redact config --init-only` to create a starter config."
+        )),
     };
 
     let basename = std::path::Path::new(&args[0])
@@ -25,7 +27,11 @@ pub fn run(args: Vec<String>) {
     let plan = build_gate1_plan(&args, &basename, &config);
 
     if plan.rejected {
-        exit_with_error("query rejected by Gate 1: SELECT * or denylisted column not permitted");
+        exit_with_error(
+            "query rejected: the query selects a denylisted PII column or uses SELECT *. \
+             Rewrite the query to select only the columns you need, or set \
+             `pii.wildcard_policy: warn` in your config to allow SELECT *.",
+        );
     }
 
     // Spawn subprocess; stderr passes through unchanged

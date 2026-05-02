@@ -12,3 +12,4 @@ shell-words = "1"
 anyhow = "1"
 thiserror = "1"
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }

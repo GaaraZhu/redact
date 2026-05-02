@@ -6,7 +6,9 @@ const TOOLKIT_TOOLS: &[&str] = &["tkpsql", "tkdbr"];
 
 pub fn run() {
     let config = Config::load().unwrap_or_else(|e| {
-        exit_with_error(&format!("failed to load config: {e}"));
+        exit_with_error(&format!(
+            "failed to load config: {e}. Run `redact config --init-only` to create a starter config."
+        ));
     });
 
     if config.tools.is_empty() {

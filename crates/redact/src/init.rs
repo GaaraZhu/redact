@@ -7,12 +7,15 @@ const HOOK_COMMAND: &str = "redact hook";
 
 pub fn run(harness: &str) {
     if is_agent_harness() {
-        exit_with_error("redact init is not available inside an agent harness");
+        exit_with_error(
+            "redact init is not available inside an agent harness. \
+             Run `redact init` in a terminal session outside the agent.",
+        );
     }
     if harness != "claude-code" {
         exit_with_error(&format!(
-            "unsupported harness '{}'; only claude-code is supported in v1",
-            harness
+            "unsupported harness '{harness}'; only claude-code is supported in v1. \
+             Usage: redact init --harness claude-code"
         ));
     }
     let path = match claude_settings_path() {

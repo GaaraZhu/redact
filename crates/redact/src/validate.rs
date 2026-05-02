@@ -8,7 +8,9 @@ const RAW_CLIENTS: &[&str] = &["mysql", "psql"];
 
 pub fn run() {
     let config = Config::load().unwrap_or_else(|e| {
-        exit_with_error(&format!("failed to load config: {e}"));
+        exit_with_error(&format!(
+            "failed to load config: {e}. Run `redact config --init-only` to create a starter config."
+        ));
     });
 
     let mut errors: Vec<String> = Vec::new();

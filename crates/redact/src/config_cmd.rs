@@ -11,7 +11,9 @@ pub fn run(show_path: bool, print_config: bool, init_only: bool) {
 
     let path = match config_path() {
         Ok(p) => p,
-        Err(e) => exit_with_error(&format!("failed to resolve config path: {e}")),
+        Err(e) => exit_with_error(&format!(
+            "failed to resolve config path: {e}. Ensure the HOME environment variable is set."
+        )),
     };
 
     run_with_path(show_path, print_config, init_only, &path);
@@ -43,7 +45,12 @@ fn run_with_path(show_path: bool, print_config: bool, init_only: bool, path: &Pa
     let status = std::process::Command::new(&editor)
         .arg(path)
         .status()
-        .unwrap_or_else(|e| exit_with_error(&format!("failed to launch editor '{}': {e}", editor)));
+        .unwrap_or_else(|e| {
+            exit_with_error(&format!(
+                "failed to launch editor '{editor}': {e}. \
+                 Set $VISUAL or $EDITOR to a valid editor path, or edit the file directly."
+            ))
+        });
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
     }
