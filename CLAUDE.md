@@ -10,23 +10,24 @@ PII-filtering CLI that transparently intercepts AI agent query commands and reda
 
 ## Current step
 
-Milestone: Milestone 3 — Gate 1 (`gate1` crate)
-Step: 15–18
+Milestone: Milestone 4 — `redact run` (the worker)
+Step: 19–22
 
 Status:
 - [x] Prototype complete
 - [x] Milestone 1 complete (config, patterns, harness, error — all 31 tests pass)
 - [x] Milestone 2 complete (Gate 2 redactor — 60 tests pass, false-negative rate = 0)
-- [ ] Gate 1 SQL tokenizer (`gate1/tokenizer.rs`)
-- [ ] Column extractor and `RedactPlan` builder (`gate1/lib.rs`)
-- [ ] Gate 1 golden SQL tests
+- [x] Milestone 3 complete (Gate 1 tokenizer + column extractor + build_plan — 121 tests pass)
+- [ ] `redact/main.rs` — clap dispatch for all subcommands
+- [ ] `redact/run.rs` — Gate 1 + Gate 2 pipeline, subprocess spawn
+- [ ] Integration tests with fake-tool binary
 
 Notes:
-`crates/common/src/redactor.rs` is the production Gate 2 implementation. It uses
-`classify_column()` (token + bigram synonym matching) for force-redaction of PII-named
-columns, plus JSONB recursive scanning, Luhn, and regex fallback. `RedactPlan` is defined
-in `common/redactor.rs` and is the Gate 1 → Gate 2 handoff struct. Gate 1 stubs exist in
-`crates/gate1/` but are placeholders — implemented in this milestone.
+`crates/gate1/src/tokenizer.rs` — hand-written SQL tokenizer (no sqlparser-rs).
+`crates/gate1/src/lib.rs` — `extract_columns()` + `build_plan()`. Matches against
+`col.original` (not alias) for denylist, stores `output_name` as the `forced_columns` key.
+Known limitations documented at the top of `lib.rs` (function calls, CTEs, subqueries
+in SELECT list, non-standard dialects).
 
 ## Repository structure
 
