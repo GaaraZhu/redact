@@ -1,0 +1,11 @@
+# redact config for local dev / demo environment.
+# psql-json is a thin wrapper around psql that outputs JSON — it stands in
+# for tkpsql/tkdbr in a real deployment.
+
+tools:
+  psql-json:
+    sql_arg: "--sql"   # Gate 1 will parse this flag's value as SQL
+
+pii:
+  action: redact
+  wildcard_policy: reject

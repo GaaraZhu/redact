@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# psql-json: run a SQL query against the demo database and return a JSON array.
+# Stands in for tkpsql/tkdbr in the local dev environment.
+#
+# Usage: psql-json --sql "SELECT ..."
+#
+# Connection defaults match dev/docker-compose.yml; override with standard
+# PG* environment variables (PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE).
+
+set -euo pipefail
+
+PGHOST="${PGHOST:-localhost}"
+PGPORT="${PGPORT:-5432}"
+PGUSER="${PGUSER:-redact}"
+PGPASSWORD="${PGPASSWORD:-redact}"
+PGDATABASE="${PGDATABASE:-redact_demo}"
+
+SQL=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sql)    SQL="$2"; shift 2 ;;
+    --sql=*)  SQL="${1#--sql=}"; shift ;;
+    *)        echo "{\"error\": \"psql-json: unknown argument: $1\"}"; exit 1 ;;
+  esac
+done
+
+if [[ -z "$SQL" ]]; then
+  echo '{"error": "psql-json: --sql argument is required"}'
+  exit 1
+fi
+
+# Wrap the caller's SQL in json_agg so the output is always a JSON array.
+# coalesce handles the empty-result case.
+WRAPPED="SELECT coalesce(json_agg(row_to_json(t)), '[]'::json) FROM ($SQL) t"
+
+export PGPASSWORD
+psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+  --tuples-only --no-align -c "$WRAPPED"

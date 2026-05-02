@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: redact_demo
+      POSTGRES_USER: redact
+      POSTGRES_PASSWORD: redact
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./seed.sql:/docker-entrypoint-initdb.d/seed.sql
+      - redact_demo_data:/var/lib/postgresql/data
+
+volumes:
+  redact_demo_data:
