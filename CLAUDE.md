@@ -10,17 +10,23 @@ PII-filtering CLI that transparently intercepts AI agent query commands and reda
 
 ## Current step
 
-Milestone: Milestone 2 — Gate 2 (`common/redactor.rs`)
-Step: 9–14
+Milestone: Milestone 3 — Gate 1 (`gate1` crate)
+Step: 15–18
 
 Status:
 - [x] Prototype complete
 - [x] Milestone 1 complete (config, patterns, harness, error — all 31 tests pass)
-- [ ] Gate 2 implementation (`RedactPlan`, shape detection, tree walk, confidence scoring, summary)
-- [ ] Golden-file tests (8–10 input/output JSON pairs, false-negative rate = 0)
+- [x] Milestone 2 complete (Gate 2 redactor — 60 tests pass, false-negative rate = 0)
+- [ ] Gate 1 SQL tokenizer (`gate1/tokenizer.rs`)
+- [ ] Column extractor and `RedactPlan` builder (`gate1/lib.rs`)
+- [ ] Gate 1 golden SQL tests
 
 Notes:
-Prototype redactor lives in `crates/redact/src/redactor.rs` (hardcoded patterns, no config integration). Milestone 2 replaces it with a production version in `crates/common/src/redactor.rs` that uses `CompiledPattern`, `Luhn`, and `Config`. Gate 1 stubs exist in `crates/gate1/` but are placeholders — implemented in Milestone 3.
+`crates/common/src/redactor.rs` is the production Gate 2 implementation. It uses
+`classify_column()` (token + bigram synonym matching) for force-redaction of PII-named
+columns, plus JSONB recursive scanning, Luhn, and regex fallback. `RedactPlan` is defined
+in `common/redactor.rs` and is the Gate 1 → Gate 2 handoff struct. Gate 1 stubs exist in
+`crates/gate1/` but are placeholders — implemented in this milestone.
 
 ## Repository structure
 
