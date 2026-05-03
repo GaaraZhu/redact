@@ -12,7 +12,7 @@ A Claude Code session querying a local Postgres database. The agent asked for al
 
 ## How it works
 
-`redact` registers a [`PreToolUse` hook](https://docs.anthropic.com/en/docs/claude-code/hooks) in the agent harness. Every Bash command the AI tries to run passes through `redact hook` first. Commands that match a configured tool are silently rewritten to route through `redact run`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
+`redact` registers a [`PreToolUse` hook](https://docs.anthropic.com/en/docs/claude-code/hooks) in the agent harness. Every Bash command the AI tries to run passes through `redact hook` first. Commands that match a configured tool are silently rewritten to `redact run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
 
 Humans and CI scripts running outside the agent harness are unaffected — no wrapper scripts are installed on PATH.
 
@@ -56,11 +56,17 @@ tools:
     sql_arg: "--sql"
   mysql:
     sql_arg: "-e"
+    json_tool: "mysql-json"   # spawn this wrapper instead; it outputs JSON
   psql:
     sql_arg: "-c"
+    json_tool: "psql-json"    # spawn this wrapper instead; it outputs JSON
   # sqlite3 takes SQL as a positional arg, not a flag:
   # sqlite3:
   #   sql_arg: null
+
+# json_tool (optional): when set, redact spawns this binary instead of the original tool
+# and translates its sql_arg flag to --sql. Use this for raw clients (psql, mysql) that
+# don't output JSON natively — point json_tool at a thin wrapper that does.
 
 pii:
   # Column names that indicate PII regardless of value content (case-insensitive, substring match).
@@ -143,7 +149,7 @@ pii:
 
 ## Output format
 
-Redacted output preserves the original JSON structure. PII values are replaced with `[PII:<type>]` placeholders. An optional `_redact_summary` field reports what was redacted:
+Redacted output preserves the original JSON structure. PII values are replaced with `[PII:<type>]` placeholders. A `_redact_summary` field is appended reporting what was redacted. All other fields (including `count`, `rows`, etc.) are passed through from the underlying tool unchanged.
 
 ```json
 {
