@@ -12,9 +12,14 @@ pub struct Config {
     pub pii: PiiConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ToolConfig {
     pub sql_arg: Option<String>,
+    /// When set, the hook rewrites invocations of this tool to use the named
+    /// JSON-output wrapper instead (e.g. `psql` → `psql-json`). The wrapper
+    /// must accept `--sql <query>` and emit JSON consumable by Gate 2.
+    #[serde(default)]
+    pub json_tool: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

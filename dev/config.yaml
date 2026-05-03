@@ -4,9 +4,16 @@
 
 tools:
   psql-json:
-    sql_arg: "--sql"   # Gate 1 will parse this flag's value as SQL
+    sql_arg: "--sql"
   psql:
     sql_arg: "-c"
+    json_tool: "psql-json"
+  mysql:
+    sql_arg: "-e"
+    json_tool: "mysql-json"
+  sqlcmd:
+    sql_arg: "-Q"
+    json_tool: "sqlcmd-json"
 
 pii:
   action: redact

@@ -32,9 +32,20 @@ PGDATABASE="${PGDATABASE:-redact_demo}"
 SQL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --sql)    SQL="$2"; shift 2 ;;
-    --sql=*)  SQL="${1#--sql=}"; shift ;;
-    *)        echo "{\"error\": \"psql-json: unknown argument: $1\"}"; exit 1 ;;
+    --sql)       SQL="$2"; shift 2 ;;
+    --sql=*)     SQL="${1#--sql=}"; shift ;;
+    # Accept standard psql connection flags so psql-json works as a drop-in
+    # when the hook rewrites `psql -h ... -c "..."` → `psql-json -h ... --sql "..."`.
+    -h)          PGHOST="$2"; shift 2 ;;
+    -h*)         PGHOST="${1#-h}"; shift ;;
+    -p)          PGPORT="$2"; shift 2 ;;
+    -p*)         PGPORT="${1#-p}"; shift ;;
+    -U)          PGUSER="$2"; shift 2 ;;
+    -U*)         PGUSER="${1#-U}"; shift ;;
+    -d)          PGDATABASE="$2"; shift 2 ;;
+    -d*)         PGDATABASE="${1#-d}"; shift ;;
+    -W|-w)       shift ;;  # password-prompt flags: ignore (we use PGPASSWORD)
+    *)           echo "{\"error\": \"psql-json: unknown argument: $1\"}"; exit 1 ;;
   esac
 done
 
@@ -42,6 +53,9 @@ if [[ -z "$SQL" ]]; then
   echo '{"error": "psql-json: --sql argument is required"}'
   exit 1
 fi
+
+# Strip trailing semicolon — valid for psql -c but breaks the subquery wrapper.
+SQL="${SQL%;}"
 
 # Wrap the caller's SQL in json_agg so the output is always a JSON array.
 # coalesce handles the empty-result case.
