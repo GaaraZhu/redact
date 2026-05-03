@@ -44,10 +44,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          printf '## SHA256 (for homebrew-redact formula)\n```\n%s  %s\n```\n' \
+            "${SHA256}" "${ARCHIVE}" > release_notes.md
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "## SHA256 (for homebrew-redact formula)
-\`\`\`
-${SHA256}  ${ARCHIVE}
-\`\`\`" \
+            --notes-file release_notes.md \
             "${ARCHIVE}"
