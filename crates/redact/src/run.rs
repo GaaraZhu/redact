@@ -1,5 +1,6 @@
 use std::io::Write;
 
+use crate::command;
 use common::config::Config;
 use common::error::exit_with_error;
 use common::redactor::{redact, RedactPlan};
@@ -35,11 +36,9 @@ pub fn run(args: Vec<String>) {
         .filter_map(|kv| kv.split_once('='))
         .collect();
 
-    let basename = std::path::Path::new(&cmd_args[0])
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(cmd_args[0].as_str())
-        .to_string();
+    // Find the configured tool in the command (may be preceded by wrapper binaries such as rtk).
+    let (tool_idx, basename) = command::find_tool_token(cmd_args, &config)
+        .unwrap_or_else(|| (0, command::token_basename(&cmd_args[0])));
 
     // Gate 1: build redact plan from SQL if tool has sql_arg configured
     let plan = build_gate1_plan(cmd_args, &basename, &config);
@@ -52,8 +51,8 @@ pub fn run(args: Vec<String>) {
         );
     }
 
-    // Resolve json_tool: if the tool has a wrapper, rewrite binary + sql_arg flag.
-    let (spawn_binary, spawn_args) = resolve_spawn_command(cmd_args, &basename, &config);
+    // Resolve json_tool: if the tool has a wrapper, rewrite its token + sql_arg flag.
+    let (spawn_binary, spawn_args) = resolve_spawn_command(cmd_args, tool_idx, &basename, &config);
 
     // Spawn subprocess; stderr passes through unchanged
     let output = match std::process::Command::new(&spawn_binary)
@@ -115,11 +114,12 @@ fn build_gate1_plan(args: &[String], basename: &str, config: &Config) -> RedactP
     )
 }
 
-/// If `basename` has a `json_tool` configured, rewrite `cmd_args[0]` to the wrapper binary
-/// and translate its `sql_arg` flag to `--sql`. All other args are preserved unchanged.
+/// If `basename` has a `json_tool` configured, rewrite the tool token at `tool_idx` to the
+/// wrapper binary and translate its `sql_arg` flag to `--sql`. All other args are preserved.
 /// Returns `(binary, remaining_args)`.
 fn resolve_spawn_command(
     cmd_args: &[String],
+    tool_idx: usize,
     basename: &str,
     config: &Config,
 ) -> (String, Vec<String>) {
@@ -135,7 +135,7 @@ fn resolve_spawn_command(
         .iter()
         .enumerate()
         .map(|(i, t)| {
-            if i == 0 {
+            if i == tool_idx {
                 json_tool.clone()
             } else if t == sql_arg {
                 "--sql".to_string()

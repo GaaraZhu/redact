@@ -1,3 +1,4 @@
+use crate::command;
 use common::config::Config;
 use serde_json::{json, Value};
 use std::io::{self, Read};
@@ -29,29 +30,27 @@ fn process(stdin: &str, config: &Config) -> Option<String> {
         .ok()
         .filter(|t| !t.is_empty())?;
 
-    // Skip leading KEY=value env-var assignments (e.g. PGPASSWORD=x psql ...)
-    let cmd_token = tokens
+    // Loop avoidance: check the first non-env-var token
+    let first_cmd = tokens
         .iter()
         .find(|t| !t.contains('=') || t.starts_with('-'))?;
-
-    let basename = std::path::Path::new(cmd_token)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(cmd_token)
-        .to_string();
-
-    // Loop avoidance: already routed through redact run
-    if basename == "redact" && tokens.get(1).map(String::as_str) == Some("run") {
-        return None;
+    let first_basename = command::token_basename(first_cmd);
+    if first_basename == "redact" {
+        let idx = tokens.iter().position(|t| t == first_cmd).unwrap_or(0);
+        if tokens.get(idx + 1).map(String::as_str) == Some("run") {
+            return None;
+        }
     }
 
+    // Find the configured tool anywhere in the positional tokens (may be preceded by wrappers)
+    let (tool_idx, basename) = command::find_tool_token(&tokens, config)?;
     let tool_config = config.tools.get(&basename)?;
 
     // If the tool has a json_tool configured, rewrite the command to use it:
-    // replace the binary name and translate the sql_arg flag to --sql.
+    // replace the tool token and translate the sql_arg flag to --sql.
     let effective_command = match (&tool_config.json_tool, &tool_config.sql_arg) {
         (Some(json_tool), Some(sql_arg)) => {
-            rewrite_to_json_tool(&tokens, cmd_token, sql_arg, json_tool)
+            rewrite_to_json_tool(&tokens, tool_idx, sql_arg, json_tool)
         }
         _ => command.clone(),
     };
@@ -77,20 +76,21 @@ fn process(stdin: &str, config: &Config) -> Option<String> {
     )
 }
 
-/// Rewrite `tokens` so that `cmd_token` is replaced with `json_tool` and
-/// `sql_arg` (in both `--flag VALUE` and `--flag=VALUE` forms) is replaced
-/// with `--sql`. Returns the reconstructed shell-quoted command string.
+/// Rewrite `tokens` so that the token at `tool_idx` is replaced with `json_tool` and
+/// `sql_arg` (in both `--flag VALUE` and `--flag=VALUE` forms) is replaced with `--sql`.
+/// Returns the reconstructed shell-quoted command string.
 fn rewrite_to_json_tool(
     tokens: &[String],
-    cmd_token: &str,
+    tool_idx: usize,
     sql_arg: &str,
     json_tool: &str,
 ) -> String {
     let eq_prefix = format!("{sql_arg}=");
     let new_tokens: Vec<String> = tokens
         .iter()
-        .map(|t| {
-            if t == cmd_token {
+        .enumerate()
+        .map(|(i, t)| {
+            if i == tool_idx {
                 json_tool.to_string()
             } else if t == sql_arg {
                 "--sql".to_string()
@@ -328,6 +328,73 @@ mod tests {
             v["hookSpecificOutput"]["updatedInput"]["restart"],
             json!(false)
         );
+    }
+
+    // ── wrapper-prefix tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn single_wrapper_prefix_intercepted() {
+        let config = default_config();
+        let out = process(
+            &make_input("rtk psql -c 'SELECT email FROM users'"),
+            &config,
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.starts_with("redact run -- rtk psql"), "got: {cmd}");
+    }
+
+    #[test]
+    fn multiple_wrapper_prefixes_intercepted() {
+        let config = default_config();
+        let out = process(
+            &make_input("wrapper1 wrapper2 psql -c 'SELECT id FROM t'"),
+            &config,
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
+            .as_str()
+            .unwrap();
+        assert!(
+            cmd.starts_with("redact run -- wrapper1 wrapper2 psql"),
+            "got: {cmd}"
+        );
+    }
+
+    #[test]
+    fn tool_as_flag_value_not_intercepted() {
+        // psql appears as the value of --db, not as a command — must passthrough
+        let config = default_config();
+        assert!(
+            process(
+                &make_input("some-tool --db psql -c 'SELECT id'"),
+                &config
+            )
+            .is_none(),
+            "should not intercept when tool name is a flag value"
+        );
+    }
+
+    #[test]
+    fn wrapper_prefix_with_json_tool_rewrites_correctly() {
+        let config = make_config(&[("psql", Some("-c"), Some("psql-json"))]);
+        let out = process(
+            &make_input("rtk psql -c 'SELECT email FROM users'"),
+            &config,
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.contains("rtk"), "wrapper must be preserved: {cmd}");
+        assert!(cmd.contains("psql-json"), "tool must be rewritten: {cmd}");
+        assert!(cmd.contains("--sql"), "flag must be translated: {cmd}");
+        assert!(!cmd.contains(" psql "), "original tool must be gone: {cmd}");
     }
 
     // ── json_tool rewrite tests ───────────────────────────────────────────────

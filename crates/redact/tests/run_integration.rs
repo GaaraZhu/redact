@@ -292,6 +292,42 @@ fn json_tool_equals_form_flag_translated() {
     assert_eq!(v["rows"][0]["email"], "[PII:email]");
 }
 
+/// Wrapper prefix: tool is at position 1 (e.g. `rtk psql`). run.rs must find it via
+/// find_tool_token, apply Gate 1 using psql's sql_arg, and spawn the wrapper correctly.
+#[test]
+fn wrapper_prefix_tool_detected_and_redacted() {
+    let dir = tmp();
+    let psql_json = write_script(
+        &dir,
+        "psql-json",
+        r#"echo '{"rows":[{"id":1,"email":"alice@example.com"}]}'"#,
+    );
+    // wrapper: executes its arguments
+    let wrapper = write_script(&dir, "wrapper", r#""$@""#);
+    let config = write_config(
+        &dir,
+        &format!("tools:\n  psql:\n    sql_arg: \"-c\"\n    json_tool: \"{psql_json}\"\n"),
+    );
+    // cmd_args = [wrapper, fake_psql, "-c", "SELECT id, email FROM users"]
+    // tool_idx=1 (psql), json_tool rewrites fake_psql → psql_json, wrapper spawns it
+    let fake_psql = dir.path().join("psql").to_str().unwrap().to_string();
+    let out = redact_run(
+        &config,
+        &wrapper,
+        &[&fake_psql, "-c", "SELECT id, email FROM users"],
+    );
+
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(v["rows"][0]["email"], "[PII:email]");
+    assert_eq!(v["rows"][0]["id"], 1);
+}
+
 /// `--sql=VALUE` form (equals sign) must be parsed correctly by find_flag_value.
 #[test]
 fn sql_flag_equals_form_parsed() {
