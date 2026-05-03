@@ -4,12 +4,24 @@ use std::collections::HashMap;
 
 use crate::patterns::COLUMN_DENYLIST;
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[serde(default)]
     pub tools: HashMap<String, ToolConfig>,
     #[serde(default)]
     pub pii: PiiConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            tools: HashMap::new(),
+            pii: PiiConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -163,6 +175,7 @@ mod tests {
     #[test]
     fn defaults_when_file_missing() {
         let config = load_missing().unwrap();
+        assert!(config.enabled);
         assert_eq!(config.pii.column_name_boost, 0.15);
         assert_eq!(config.pii.confidence_threshold, 0.8);
         assert_eq!(config.pii.redaction, "[PII:{type}]");
@@ -172,6 +185,24 @@ mod tests {
         assert!(config.tools.is_empty());
         assert!(config.pii.column_names.is_empty());
         assert!(config.pii.patterns.is_empty());
+    }
+
+    #[test]
+    fn enabled_false_parses_correctly() {
+        let config = load_from_yaml("enabled: false\n").unwrap();
+        assert!(!config.enabled);
+    }
+
+    #[test]
+    fn enabled_true_explicit() {
+        let config = load_from_yaml("enabled: true\n").unwrap();
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn enabled_defaults_to_true_when_key_absent() {
+        let config = load_from_yaml("pii:\n  action: warn\n").unwrap();
+        assert!(config.enabled);
     }
 
     #[test]

@@ -1,5 +1,8 @@
 pub const STARTER_CONFIG: &str = r#"# redact configuration
 
+# Set to false to disable all PII redaction (equivalent to REDACT_DISABLED=1 env var).
+enabled: true
+
 # Tools whose Bash invocations are intercepted and piped through `redact run`.
 # Only tools listed here are intercepted; everything else passes through unchanged.
 #

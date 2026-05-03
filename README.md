@@ -139,12 +139,23 @@ pii:
 | Command | Purpose |
 |---|---|
 | `redact init` | Register the PreToolUse hook in [Claude Code](https://claude.ai/code) |
+| `redact enable` | Enable PII redaction (sets `enabled: true` in config) |
+| `redact disable` | Disable PII redaction (sets `enabled: false` in config) |
 | `redact config` | Create and edit the config file |
 | `redact list` | Show configured tools and their SQL flags |
 | `redact validate` | Check config for errors and warnings |
 | `redact version` | Print version |
 
 `redact run` and `redact hook` are invoked by the hook machinery, not by users directly.
+
+To disable redaction for a single shell session without editing the config file, set the `REDACT_DISABLED` environment variable:
+
+```bash
+export REDACT_DISABLED=1   # disable for this session
+export REDACT_DISABLED=0   # re-enable (or just unset it)
+```
+
+The env var takes precedence over the config file, so it works even if `enabled: true` is set in config.
 
 ## Security model
 

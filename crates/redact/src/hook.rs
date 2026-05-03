@@ -16,8 +16,18 @@ pub fn run() {
     // No output → passthrough (Claude Code allows the original command)
 }
 
+fn is_disabled_by_env() -> bool {
+    std::env::var("REDACT_DISABLED")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
 /// Returns `Some(json_string)` to rewrite, `None` to pass through unchanged.
 fn process(stdin: &str, config: &Config) -> Option<String> {
+    if !config.enabled || is_disabled_by_env() {
+        return None;
+    }
+
     let hook_input: Value = serde_json::from_str(stdin).ok()?;
 
     let command = hook_input
@@ -119,6 +129,9 @@ mod tests {
     use common::config::ToolConfig;
     use serde_json::json;
     use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static LOCK: Mutex<()> = Mutex::new(());
 
     fn make_config(entries: &[(&str, Option<&str>, Option<&str>)]) -> Config {
         let tools = entries
@@ -155,6 +168,57 @@ mod tests {
             "tool_input": { "command": command }
         })
         .to_string()
+    }
+
+    #[test]
+    fn passthrough_when_config_disabled() {
+        let mut config = default_config();
+        config.enabled = false;
+        // Even a normally-intercepted tool must passthrough when disabled.
+        assert!(process(
+            &make_input("tkpsql --sql 'SELECT email FROM users'"),
+            &config
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn passthrough_when_env_disabled() {
+        let _guard = LOCK.lock().unwrap();
+        unsafe { std::env::set_var("REDACT_DISABLED", "1") };
+        let result = process(
+            &make_input("tkpsql --sql 'SELECT email FROM users'"),
+            &default_config(),
+        );
+        unsafe { std::env::remove_var("REDACT_DISABLED") };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn env_disabled_true_string() {
+        let _guard = LOCK.lock().unwrap();
+        unsafe { std::env::set_var("REDACT_DISABLED", "true") };
+        let result = process(
+            &make_input("tkpsql --sql 'SELECT email FROM users'"),
+            &default_config(),
+        );
+        unsafe { std::env::remove_var("REDACT_DISABLED") };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn env_disabled_zero_does_not_disable() {
+        let _guard = LOCK.lock().unwrap();
+        unsafe { std::env::set_var("REDACT_DISABLED", "0") };
+        let result = process(
+            &make_input("tkpsql --sql 'SELECT email FROM users'"),
+            &default_config(),
+        );
+        unsafe { std::env::remove_var("REDACT_DISABLED") };
+        assert!(
+            result.is_some(),
+            "REDACT_DISABLED=0 must not disable redact"
+        );
     }
 
     #[test]

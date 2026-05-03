@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 
 mod command;
 mod config_cmd;
+mod enable_disable;
 mod hook;
 mod init;
 mod list;
@@ -51,6 +52,10 @@ enum Commands {
     List,
     /// Load config, compile patterns, and report errors or warnings
     Validate,
+    /// Enable PII redaction (sets enabled: true in config)
+    Enable,
+    /// Disable PII redaction (sets enabled: false in config)
+    Disable,
     /// Print version
     Version,
 }
@@ -68,6 +73,8 @@ fn main() {
         } => config_cmd::run(path, print, init_only),
         Commands::List => list::run(),
         Commands::Validate => validate::run(),
+        Commands::Enable => enable_disable::run(true),
+        Commands::Disable => enable_disable::run(false),
         Commands::Version => println!("{}", env!("CARGO_PKG_VERSION")),
     }
 }
