@@ -6,6 +6,12 @@ use common::error::exit_with_error;
 use common::redactor::{redact, RedactPlan};
 use gate1::{build_plan, extract_columns};
 
+fn is_disabled_by_env() -> bool {
+    std::env::var("REDACT_DISABLED")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
 pub fn run(args: Vec<String>) {
     if args.is_empty() {
         exit_with_error("redact run: no command specified. Usage: redact run -- <tool> [args...]");
@@ -17,6 +23,12 @@ pub fn run(args: Vec<String>) {
             "failed to load config: {e}. Run `redact config --init-only` to create a starter config."
         )),
     };
+
+    // When redaction is disabled (config or env var), act as a transparent passthrough.
+    if !config.enabled || is_disabled_by_env() {
+        passthrough(args);
+        return;
+    }
 
     // Split leading KEY=VALUE env-var assignments from the actual command.
     let env_count = args
@@ -153,6 +165,38 @@ fn resolve_spawn_command(
         .collect();
 
     (new_args[0].clone(), new_args[1..].to_vec())
+}
+
+/// Spawn the command without any interception and forward stdout/stderr/exit code unchanged.
+fn passthrough(args: Vec<String>) {
+    // Strip leading KEY=VALUE env-var tokens.
+    let env_count = args
+        .iter()
+        .take_while(|t| t.contains('=') && !t.starts_with('-'))
+        .count();
+    let (env_tokens, cmd_args) = args.split_at(env_count);
+    if cmd_args.is_empty() {
+        exit_with_error(
+            "redact run: no command after env vars. Usage: redact run -- <tool> [args...]",
+        );
+    }
+    let env_pairs: Vec<(&str, &str)> = env_tokens
+        .iter()
+        .filter_map(|kv| kv.split_once('='))
+        .collect();
+
+    let status = match std::process::Command::new(&cmd_args[0])
+        .args(&cmd_args[1..])
+        .envs(env_pairs)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+    {
+        Ok(s) => s,
+        Err(e) => exit_with_error(&format!("{}: {e}", cmd_args[0])),
+    };
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 /// Find the value of `flag` in `args`, supporting both `--flag VALUE` and `--flag=VALUE`.

@@ -328,6 +328,64 @@ fn wrapper_prefix_tool_detected_and_redacted() {
     assert_eq!(v["rows"][0]["id"], 1);
 }
 
+/// When `enabled: false` in config, `redact run` must forward the tool's output
+/// unchanged — no redaction, no `_redact_summary`.
+#[test]
+fn disabled_config_passes_through_without_redaction() {
+    let dir = tmp();
+    let tool = write_script(
+        &dir,
+        "fake-tkpsql",
+        r#"echo '{"rows":[{"id":1,"email":"alice@example.com","credit_card":"4111111111111111"}],"count":1}'"#,
+    );
+    let config = write_config(
+        &dir,
+        "enabled: false\ntools:\n  fake-tkpsql:\n    sql_arg: \"--sql\"\n",
+    );
+
+    let out = redact_run(
+        &config,
+        &tool,
+        &["--sql", "SELECT id, email, credit_card FROM users"],
+    );
+
+    assert_eq!(exit_code(&out), 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    // PII values must be present verbatim
+    assert_eq!(v["rows"][0]["email"], "alice@example.com");
+    assert_eq!(v["rows"][0]["credit_card"], "4111111111111111");
+    // No summary injected
+    assert!(v.get("_redact_summary").is_none());
+}
+
+/// When `REDACT_DISABLED=1`, `redact run` must forward the tool's output unchanged.
+#[test]
+fn env_disabled_passes_through_without_redaction() {
+    let dir = tmp();
+    let tool = write_script(
+        &dir,
+        "fake-tkpsql",
+        r#"echo '{"rows":[{"id":1,"email":"bob@example.com"}],"count":1}'"#,
+    );
+    let config = write_config(&dir, "tools:\n  fake-tkpsql:\n    sql_arg: \"--sql\"\n");
+
+    let out = Command::new(BIN)
+        .arg("run")
+        .arg("--")
+        .arg(&tool)
+        .arg("--sql")
+        .arg("SELECT id, email FROM users")
+        .env("REDACT_CONFIG", &config)
+        .env("REDACT_DISABLED", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(exit_code(&out), 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(v["rows"][0]["email"], "bob@example.com");
+    assert!(v.get("_redact_summary").is_none());
+}
+
 /// `--sql=VALUE` form (equals sign) must be parsed correctly by find_flag_value.
 #[test]
 fn sql_flag_equals_form_parsed() {
