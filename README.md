@@ -17,18 +17,18 @@ A Claude Code session querying a local Postgres database. The agent asked for al
 Humans and CI scripts running outside the agent harness are unaffected — no wrapper scripts are installed on PATH.
 
 ```
-AI asks to run: tkpsql --sql "SELECT id, email FROM users"
+AI asks to run: psql -c "SELECT * FROM users"
                         │
               PreToolUse hook fires
                         │
-              redact hook rewrites to: redact run -- tkpsql --sql "..."
+              redact hook rewrites to: redact run -- psql -c "..."
                         │
          ┌──────────────┴──────────────┐
-         │ Gate 1: SQL inspection      │  finds "email" in SELECT → marks for redaction
+         │ Gate 1: SQL inspection      │  SELECT * → no column hints, defer to Gate 2
          │ Gate 2: Value scanning      │  regex + column-name heuristics + Luhn check
          └──────────────┬──────────────┘
                         │
-         {"id": 1, "email": "[PII:email]", "_redact_summary": {...}}
+         {"id": 1, "username": "alice", ..., "email": "[PII:email]", "credit_card": "[PII:credit_card]", "_redact_summary": {...}}
 ```
 
 ## Installation
