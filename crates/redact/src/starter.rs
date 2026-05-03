@@ -24,7 +24,7 @@ tools:
 
 pii:
   action: redact           # redact | warn | reject
-  wildcard_policy: reject  # warn | reject
+  wildcard_policy: warn    # warn | reject
 
   # Add column names beyond the built-in denylist (email, ssn, dob, phone, npi, …)
   # column_names:

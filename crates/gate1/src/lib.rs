@@ -16,8 +16,8 @@
 //! - **Non-standard dialects**: the tokenizer handles standard SQL and Databricks
 //!   SQL.  Vendor-specific syntax (e.g. `$1` positional params) may fall through
 //!   to `Unknown`, producing an empty plan — Gate 2 is the safety net.
-//! - **`SELECT *` with `wildcard_policy=reject` (default)**: rejects the query
-//!   before execution.  Set `wildcard_policy: warn` to permit wildcard queries.
+//! - **`SELECT *` with `wildcard_policy=warn` (default)**: passes the query
+//!   through with a warning.  Set `wildcard_policy: reject` to block wildcards.
 
 pub mod tokenizer;
 

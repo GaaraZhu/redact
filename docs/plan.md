@@ -264,6 +264,139 @@ Exit 0 if all checks pass with at most warnings; exit 1 on errors.
 
 ---
 
+## Milestone 7 — Close the non-JSON output gap
+
+**Motivation:** Gate 2 currently requires JSON stdout. The shipped design relies on a per-tool `json_tool` config field (see `crates/redact/src/config.rs:22` and `crates/redact/src/hook.rs:57`): when the AI types `psql -c "..."`, the hook rewrites the spawn target to a side binary like `psql-json` and that wrapper is what produces JSON. The demo works because `psql-json` is installed on the demo host. The mechanism breaks silently when the wrapper is missing — inside a Docker container, on a fresh laptop, in CI — because (a) `psql`/`mysql` have no native `--json` output flag, (b) nothing pre-flights the wrapper's existence, and (c) on parse failure today's `redact run` forwards stdout unchanged. Net result: a silent PII leak whenever the wrapper isn't on PATH.
+
+The right answer is to make `redact run` produce JSON itself by **rewriting the SQL** before spawning the subprocess, using the JSON-construction functions every modern relational DB ships with (`row_to_json` / `json_agg` in Postgres, `JSON_OBJECT` / `JSON_ARRAYAGG` in MySQL). When rewrite succeeds we keep full Gate 2 protection (column-aware, forced-column path applies). When rewrite is not safe — multi-statement input, `\` meta-commands, `COPY`, `EXPLAIN`, side-effecting queries — we fail closed instead of leaking. This makes `redact` self-contained: no side wrapper needs to exist, no PATH dependency in the container.
+
+`json_tool` becomes deprecated by `rewrite_sql`. They solve the same problem; `rewrite_sql` does it without requiring an extra binary on PATH. We keep `json_tool` working for one release for backwards compatibility, then remove it.
+
+This milestone has three parts: (A) fail closed on non-JSON output and pre-flight `json_tool` existence (the safety net), (B) SQL rewrite for raw clients (the primary path), (C) deprecate `json_tool` in favor of `rewrite_sql`.
+
+### Part A — Fail closed on non-JSON + pre-flight `json_tool` (must-have, ships first)
+
+**Step 36. `redact run` fails closed when stdout is not JSON.** Today: parse failure → forward unchanged. New behavior: parse failure → emit `{"error": "tool stdout was not JSON; refusing to forward unredacted output. Configure rewrite_sql for this tool, or install the json_tool wrapper."}` and exit 1. Update integration tests for the new failure mode.
+
+**Step 37. `redact run` pre-flights `json_tool` before spawn.** When a tool's `json_tool` is configured, `redact run` resolves it on PATH (the same lookup the OS will do at exec time) before spawning. If not found, emit `{"error": "configured json_tool '<name>' not found on PATH; cannot redact output. Install the wrapper or configure rewrite_sql instead."}` and exit 1. Without this check the OS exec error bubbles up as a generic failure and the AI gets confused / retries the bare `psql` command; the explicit error is both safer and more debuggable. Add a unit test using a tempdir-controlled PATH.
+
+**Step 38. `validate` warns on raw clients without rewrite or wrapper configured.** When a tool entry has a basename in the raw-client set (`psql`, `mysql`, `sqlite3`, `mongosh`, `mysqlsh`) and neither `rewrite_sql` (Step 39) nor an existing `json_tool` is configured, emit a hard warning naming the tool and pointing at the rewrite option. When `json_tool` *is* configured, `validate` also resolves it on PATH and warns if missing — same logic as the runtime pre-flight, surfaced earlier. Soft-warn-on-raw-client (existing FR) is upgraded from "credentials reachable" to also cover output-format risk.
+
+**Exit criterion for Part A:** Three behaviors verified by tests: (i) a `psql -c "SELECT email FROM users"` invocation with no `json_tool` and no `rewrite_sql` returns the Step 36 error JSON; (ii) the same invocation with `json_tool: psql-json` and `psql-json` not on PATH returns the Step 37 error JSON; (iii) `redact validate` warns on both conditions. This part is independently shippable — Part B builds on top.
+
+### Part B — SQL rewrite for raw clients (primary path)
+
+**Step 39. Per-tool `rewrite_sql` config.** Add to `ToolConfig`:
+
+```rust
+pub enum RewriteDialect { Postgres, Mysql }
+pub struct ToolConfig {
+    pub sql_arg: Option<String>,
+    pub json_tool: Option<String>,              // deprecated; see Part C
+    pub rewrite_sql: Option<RewriteDialect>,    // None = no rewrite
+    pub rewrite_extra_args: Vec<String>,         // e.g. ["-t", "-A"] for psql
+}
+```
+
+When `rewrite_sql` is set, `redact run` rewrites the SQL string in the configured `sql_arg` and prepends `rewrite_extra_args` to the spawned argv. If both `rewrite_sql` and `json_tool` are set on the same entry, `rewrite_sql` wins and `validate` warns about the redundant `json_tool`.
+
+**Step 40. `gate1::rewrite::wrap_select(sql, dialect, plan) -> RewriteResult`.** Returns one of:
+
+```rust
+pub enum RewriteResult {
+    Rewritten(String),       // safe to send to the DB
+    Skip(String),            // reason — fall through to fail-closed
+}
+```
+
+Rewrite rules:
+
+- **Postgres:** `<sql>` → `SELECT coalesce(json_agg(row_to_json(_r)), '[]'::json) FROM (<sql>) _r`. Combined with `psql -t -A`, output is a single line containing a JSON array.
+- **MySQL:** `<sql>` → `SELECT JSON_ARRAYAGG(JSON_OBJECT(<key/val pairs from Gate 1's extracted columns>)) FROM (<sql>) _r`. Requires Gate 1 to have an explicit column list — `SELECT *` and `Unknown` extractions skip the rewrite. Combined with `mysql -N -B`.
+
+Skip conditions (return `Skip` with reason):
+
+- Multiple statements separated by `;` (after stripping trailing whitespace/comments).
+- Leading `\` meta-command (psql).
+- Top-level keyword is not `SELECT` / `WITH` (so `COPY`, `EXPLAIN`, `SHOW`, DML, DDL all skip).
+- For MySQL: Gate 1 column extraction is `Wildcard` or `Unknown`.
+- SQL already wraps in `json_agg` / `JSON_ARRAYAGG` (don't double-wrap — detect and pass through).
+
+**Step 41. `redact run` dispatches on `rewrite_sql`.** New flow when `rewrite_sql` is set:
+
+1. Load config, find tool entry, find SQL via `sql_arg`.
+2. Run Gate 1 column extraction → `RedactPlan` (unchanged).
+3. Call `wrap_select(sql, dialect, plan)`.
+4. If `Rewritten(new_sql)`: substitute back into argv at the `sql_arg` position; prepend `rewrite_extra_args` to the rest of argv.
+5. If `Skip(reason)`: append the reason to `plan.warnings` and proceed without rewrite. The fail-closed check from Step 36 catches the resulting non-JSON output.
+6. Spawn subprocess, capture stdout.
+7. Parse stdout. For Postgres: stdout is a JSON array (or `[]`); wrap as `{"rows": <array>}` for the existing shape pipeline. For MySQL: same — `JSON_ARRAYAGG` returns a JSON array.
+8. Run Gate 2 with the plan as today.
+
+**Step 42. Output unwrapping and shape consistency.** The rewritten output is always a JSON array. Reuse Milestone 2's array-shape handling: wrap as `{"rows": [...], "_redact_summary": ...}` when `include_summary: true`, otherwise return the bare array. The AI sees the same shape it would see from `tkpsql`, so prompt expectations stay consistent.
+
+**Step 43. Error and edge-case handling.**
+
+- **DB error from the rewritten query.** If the subprocess exits non-zero, forward stdout unchanged and propagate exit. Add a warning to `_redact_summary.warnings` only if we successfully attached a summary (i.e., output parsed); for non-zero-exit + non-JSON output, just propagate.
+- **DB rewrites the column names** (Postgres lowercases unquoted identifiers in `row_to_json`; aliases survive). Gate 1 already lowercases keys for forced-column matching, so this aligns. Add an explicit test that `SELECT email AS Contact FROM users` produces a key `contact` after rewrite and that Gate 1's plan still matches.
+- **Empty result set.** Postgres' `json_agg` returns `NULL` on empty input; the `coalesce(..., '[]'::json)` wrap above handles it.
+- **Whitespace / trailing semicolon in user SQL.** Strip trailing `;` and surrounding whitespace before wrapping; otherwise the subquery is a syntax error.
+
+**Step 44. Tests.**
+
+- Unit: `wrap_select` golden cases — simple SELECT, SELECT with WHERE, JOIN, CTE (`WITH ... SELECT`), aliases, qualified columns, trailing semicolon, leading whitespace.
+- Unit: `wrap_select` skip cases — multi-statement, `\d users`, `COPY ... TO STDOUT`, `EXPLAIN SELECT ...`, `INSERT`, `UPDATE`, already-wrapped query.
+- Integration: fake `psql` shim that echoes the SQL it received and emits a synthetic JSON array. Assert the rewritten SQL contains `json_agg(row_to_json(_r))` and the args contain `-t -A`. Assert the redacted output preserves `rows` shape.
+- Integration: same for MySQL with `JSON_ARRAYAGG` + `-N -B`.
+- Integration: confirm Part A's fail-closed still triggers when rewrite is `Skip`-ped (e.g. `psql -c "\d users"` returns the error JSON, not aligned text).
+- Negative: `rewrite_sql: None` (default for `tkpsql`/`tkdbr`) is unaffected.
+
+**Exit criterion for Part B:** A `psql -c "SELECT email, ssn FROM users"` invocation through `redact run` (with `psql` configured per the new README recipe) returns the same shape as `tkpsql` would — `{"rows": [{"email": "[PII:email]", "ssn": "[PII:ssn]"}], "_redact_summary": {...}}` — using only stock `psql`, no shim binary required. `psql -c "\d users"` continues to fail closed via Part A. Same for `mysql -e`.
+
+### Part C — Deprecate `json_tool` in favor of `rewrite_sql`
+
+**Step 45. Mark `json_tool` deprecated in code.** Keep the field parsing and the hook rewrite path working unchanged — backwards compatibility for one release. On config load, if any tool has `json_tool` set, log a one-line deprecation notice on stderr (not stdout — must not pollute hook output): `redact: json_tool is deprecated, use rewrite_sql instead. See docs.` `validate` surfaces the same notice as a warning.
+
+**Step 46. Migrate first-party config and docs.** Update `redact/starter.rs` to use `rewrite_sql` for the `psql`/`mysql` entries (no `json_tool`). Update `README.md` to remove the `json_tool: psql-json` example and replace it with the rewrite recipe. Update `docs/design.md` to describe both fields with `rewrite_sql` as the recommended path and `json_tool` as deprecated. Add a one-liner migration note: "If you previously configured `json_tool: psql-json`, replace with `rewrite_sql: postgres` and `rewrite_extra_args: [\"-t\", \"-A\"]` and uninstall the wrapper."
+
+**Step 47. Plan removal.** Note in `docs/plan.md` (this milestone) that `json_tool` will be removed in v0.3.0 — but **do not remove it now**. Removing in the same release that introduces the deprecation breaks every existing user.
+
+**Step 48. Docs.**
+
+- `docs/design.md`: add a "SQL Rewrite" subsection under the Two-Gate Model. Document the rewrite templates per dialect, the skip conditions, and the trade-off (rewrite changes what the DB sees — error messages and `EXPLAIN` plans will reference the wrapped query). Update the Call Chain ASCII diagram to show the rewrite step between Gate 1 and subprocess spawn. Mark `json_tool` deprecated and link to the migration note.
+- `README.md`: replace the "Raw clients" section's `json_tool` examples with:
+  ```yaml
+  tools:
+    psql:
+      sql_arg: "-c"
+      rewrite_sql: postgres
+      rewrite_extra_args: ["-t", "-A"]
+    mysql:
+      sql_arg: "-e"
+      rewrite_sql: mysql
+      rewrite_extra_args: ["-N", "-B"]
+  ```
+  Explain the trade-off in one paragraph: the DB sees a wrapped query; non-SELECT statements (`\d`, `COPY`, DML) are not rewritten and fail closed.
+- `CLAUDE.md`: update Non-negotiables — failing closed on non-JSON output is a non-negotiable; `rewrite_sql` is the supported path for raw clients; `json_tool` remains for backwards compatibility but is deprecated.
+
+**Exit criterion for Part C:** Existing configs using `json_tool` still work end-to-end (regression test); deprecation warning appears on stderr exactly once per `redact run` and on `redact validate`; starter config and README no longer mention `json_tool`; migration note is discoverable from both the README and `docs/design.md`.
+
+### Risks specific to Milestone 7
+
+1. **SQL the rewriter doesn't recognize as safe.** Rare dialect features, vendor extensions, query hints. Mitigation: when in doubt, `Skip` and let Part A fail closed — degraded UX but never a leak.
+2. **Error messages reference the wrapped query.** A syntax error from the user's inner SQL surfaces with `... in subquery _r` context. Document this; it's a UX paper cut, not a correctness bug.
+3. **`row_to_json` column lowercasing in Postgres.** Unquoted identifiers come back lowercase. Gate 1 already normalizes to lowercase, so forced-column matching works. Add a regression test pinning this contract.
+4. **MySQL `JSON_OBJECT` requires explicit columns.** `SELECT *` cannot be rewritten without a schema lookup. Mitigation: skip; Part A fails closed; document in README that `SELECT *` against MySQL via raw `mysql` is unsupported (use `tkdbr` or list columns).
+5. **Performance of rewriting on the DB side.** `json_agg` over a million rows builds a single big JSON value in DB memory. Mitigation: this is the same risk the AI would hit if it wrote the JSON wrapper itself — out of scope for redact to mitigate. Document.
+6. **A query that already returns JSON gets double-wrapped.** Detect single-column SELECT whose expression starts with `json_`/`JSON_` and skip; add tests.
+7. **Deprecation noise breaks the hook.** Logs to stdout would corrupt the rewritten command. Strict rule: deprecation goes to stderr only. Test pins this.
+
+### Effort estimate
+
+3–3.5 working days. Part A is ~one day (fail-closed branch + `json_tool` PATH pre-flight + validate updates + tests). Part B is ~1.5 days (`gate1::rewrite` module ~150 lines, dispatch wiring in `run.rs`, two dialect templates, ~20 unit tests, two integration shims). Part C is ~half a day (deprecation notice plumbing, starter/README/design migration, regression test).
+
+---
+
 ## Critical files to write or carefully shape
 
 | File | Why critical |

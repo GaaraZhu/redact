@@ -55,8 +55,8 @@ pub enum Action {
 #[derive(Debug, Deserialize, Serialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum WildcardPolicy {
-    Warn,
     #[default]
+    Warn,
     Reject,
 }
 
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(config.pii.redaction, "[PII:{type}]");
         assert!(config.pii.include_summary);
         assert_eq!(config.pii.action, Action::Redact);
-        assert_eq!(config.pii.wildcard_policy, WildcardPolicy::Reject);
+        assert_eq!(config.pii.wildcard_policy, WildcardPolicy::Warn);
         assert!(config.tools.is_empty());
         assert!(config.pii.column_names.is_empty());
         assert!(config.pii.patterns.is_empty());
@@ -220,7 +220,7 @@ pii:
         assert_eq!(config.pii.confidence_threshold, 0.8);
         assert_eq!(config.pii.redaction, "[PII:{type}]");
         assert!(config.pii.include_summary);
-        assert_eq!(config.pii.wildcard_policy, WildcardPolicy::Reject);
+        assert_eq!(config.pii.wildcard_policy, WildcardPolicy::Warn);
         assert!(config.tools.is_empty());
     }
 

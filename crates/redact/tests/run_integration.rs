@@ -158,7 +158,7 @@ fn unconfigured_tool_still_runs_gate2() {
     assert_eq!(v["email"], "[PII:email]");
 }
 
-/// Gate 1 rejection: SELECT * with wildcard_policy=reject (the default) must
+/// Gate 1 rejection: SELECT * with wildcard_policy=reject must
 /// exit 1 with an error JSON before the tool is ever spawned.
 #[test]
 fn gate1_wildcard_reject_prevents_execution() {
