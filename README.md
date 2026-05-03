@@ -34,7 +34,12 @@ AI asks to run: psql -c "SELECT * FROM users"
 ## Installation
 
 ```bash
-cargo install redact
+# Homebrew (recommended)
+brew tap GaaraZhu/redact
+brew install redact
+
+# Or via cargo
+cargo install --git https://github.com/GaaraZhu/redact
 
 # Register the PreToolUse hook in Claude Code
 # Requires Claude Code: https://claude.ai/code
