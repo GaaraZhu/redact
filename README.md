@@ -2,24 +2,33 @@
 
 PII-filtering CLI that transparently intercepts AI agent query commands and redacts sensitive data before it reaches the model context.
 
-AI coding agents querying production databases can inadvertently exfiltrate PII. A single `SELECT *` against a users table exposes emails, SSNs, and payment data directly into the model's context window — and from there into logs, prompts, and training pipelines. `redact` stops this without requiring any changes to the AI's prompts or query tools.
+AI coding agents that access internal data sources can inadvertently exfiltrate PII — whether querying a database or calling an internal API. A single `SELECT *` or `curl` against an internal service can expose emails, SSNs, and payment data directly into the model's context window — and from there into logs, prompts, and training pipelines. `redact` stops this without requiring any changes to the AI's prompts or tools.
 
 ## Demo
 
-A Claude Code session querying a local Postgres database via `tkpsql`. The agent asked for all users in plain English; `redact` intercepted the query and returned all columns — but masked the values of `email` and `credit_card` with `[PII:email]` and `[PII:credit_card]` before they reached the model context.
+**Claude Code** — the agent asked for all users in plain English; `redact` intercepted the query and returned all columns with `email` and `credit_card` masked before they reached the model context.
 
-![redact blocking PII in a Claude Code session using tkpsql](docs/demo-tkpsql.jpg)
+![redact blocking PII in a Claude Code session using tkpsql](docs/demo-claude-code.jpg)
+
+**opencode** — same query, same two-gate redaction pipeline, different harness. The `email` and `credit_card` columns are replaced with `[PII:email]` and `[PII:credit_card]` before the model sees the result.
+
+![redact blocking PII in an opencode session using tkpsql](docs/demo-opencode.jpg)
 
 ## How it works
 
-`redact` registers a [`PreToolUse` hook](https://docs.anthropic.com/en/docs/claude-code/hooks) in the agent harness. Every Bash command the AI tries to run passes through `redact hook` first. Commands that match a configured tool are silently rewritten to `redact run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
+`redact` integrates with your agent harness as a transparent rewrite hook. Every Bash command the AI tries to run passes through `redact hook` first. Commands that match a configured tool are silently rewritten to `redact run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
+
+The rewrite is **enforcing** in both supported harnesses — the AI cannot bypass it:
+
+- **Claude Code** — registered as a [`PreToolUse` hook](https://docs.anthropic.com/en/docs/claude-code/hooks) in `~/.claude/settings.json`; Claude Code replaces the command via `updatedInput` before running it.
+- **opencode** — a TypeScript plugin's `tool.execute.before` handler mutates `output.args.command` before the subprocess spawns; same guarantee as Claude Code.
 
 Humans and CI scripts running outside the agent harness are unaffected — no wrapper scripts are installed on PATH.
 
 ```
 AI asks to run: tkpsql query --sql "SELECT * FROM users"
                         │
-              PreToolUse hook fires
+         harness hook fires (PreToolUse / tool.execute.before)
                         │
               redact hook rewrites to: redact run -- tkpsql query --sql "..."
                         │
@@ -31,22 +40,17 @@ AI asks to run: tkpsql query --sql "SELECT * FROM users"
          {"id": 1, "username": "alice", ..., "email": "[PII:email]", "credit_card": "[PII:credit_card]", "_redact_summary": {...}}
 ```
 
-## Supported tools
+## Supported commands
 
-`redact` currently supports tools that **output JSON natively**. The AI sees the same structured response it always did, with PII values replaced in-place.
+Any command that returns JSON can be configured as a `redact` target — database clients, internal API calls via `curl`, or any other tool your AI agent uses to fetch data. The AI sees the same structured response it always did, with PII values replaced in-place.
 
-| Tool | Type | Status |
+| Command | Type | Status |
 |---|---|---|
 | `tkpsql` | PostgreSQL ([toolkit](https://github.com/scott-abernethy/toolkit)-managed) | Supported |
-| `tkdbr` | DynamoDB ([toolkit](https://github.com/scott-abernethy/toolkit)-managed) | Supported |
-| `psql` | PostgreSQL (raw client) | Planned — see roadmap |
-| `mysql` | MySQL (raw client) | Planned — see roadmap |
-
-Raw clients like `psql` and `mysql` output plain text by default, not JSON. Support is planned via automatic SQL rewriting: `redact` will wrap the query in database-native JSON functions (`json_agg`/`JSON_ARRAYAGG`) before spawning the subprocess — no wrapper binaries required.
-
-![Future: redact blocking PII via psql with SQL rewrite](docs/demo-psql.jpg)
-
-> **Roadmap.** The screenshot above shows a dev preview of `psql` support coming in the next release. `redact` will rewrite `SELECT * FROM users` into `SELECT json_agg(row_to_json(_r)) FROM (SELECT * FROM users) _r`, produce the same JSON shape as `tkpsql`, and apply both gates as today. Non-`SELECT` statements (`\d`, `COPY`, DML) will fail closed rather than forward unredacted output.
+| `tkmsql` | MS SQL Server ([toolkit](https://github.com/scott-abernethy/toolkit)-managed) | Supported |
+| `tkdbr` | Databricks ([toolkit](https://github.com/scott-abernethy/toolkit)-managed) | Supported |
+| `curl` | Internal API / HTTP data source | Planned |
+| Raw DB clients (`psql`, `mysql`, …) | Direct database access | Planned |
 
 ## Installation
 
@@ -93,10 +97,10 @@ enabled: true
 tools:
   tkpsql:
     sql_arg: "--sql"
+  tkmsql:
+    sql_arg: "--sql"
   tkdbr:
     sql_arg: "--sql"
-  # psql and mysql support is coming in the next release.
-  # Raw clients will be supported via automatic SQL rewriting — no wrapper binaries needed.
 
 pii:
   # Column names that indicate PII regardless of value content (case-insensitive, substring match).
