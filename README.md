@@ -62,7 +62,7 @@ cargo install --git https://github.com/GaaraZhu/redact
 redact config
 ```
 
-Then register the hook with the supported agent harness:
+Then register the hook with your agent harness:
 
 **Claude Code** ([claude.ai/code](https://claude.ai/code)) — transparent rewrite; the harness silently runs `redact run -- <your command>`:
 
@@ -70,8 +70,16 @@ Then register the hook with the supported agent harness:
 redact init                         # writes ~/.claude/settings.json
 ```
 
+**opencode** ([opencode.ai](https://opencode.ai)) — transparent rewrite via a TypeScript plugin that mutates `output.args.command` before the subprocess spawns (same enforcing guarantee as Claude Code):
+
+```bash
+redact init --harness opencode              # global: ~/.config/opencode/plugin/redact.ts
+redact init --harness opencode --scope project  # project: ./.opencode/plugin/redact.ts
+```
+
+Restart your opencode session after running `redact init` to load the plugin.
+
 > **Roadmap — additional harnesses.**
-> - **opencode** — planned for the next release. opencode's `tool.execute.before` plugin hook supports transparent rewrite, so the integration will be enforcing (same guarantee as Claude Code).
 > - **GitHub Copilot CLI** — deferred to a future release. Copilot CLI's `preToolUse` hook only supports deny-with-suggestion (no transparent rewrite), which makes the integration *advisory* — strictly safer than no hook, but the AI could in principle ignore the suggested rewrite. We're holding the integration until either Copilot CLI gains an `updatedInput` equivalent or the user demand justifies shipping the advisory-only mode.
 
 ## Configuration
@@ -149,7 +157,7 @@ pii:
 
 | Command | Purpose |
 |---|---|
-| `redact init [--harness claude-code]` | Register the PreToolUse hook in [Claude Code](https://claude.ai/code) settings (`~/.claude/settings.json`). Additional harnesses (opencode, Copilot CLI) are on the roadmap. |
+| `redact init [--harness claude-code\|opencode] [--scope global\|project]` | Register the hook in the agent harness. `claude-code` (default) writes `~/.claude/settings.json`; `opencode` writes a TypeScript plugin at the chosen scope. |
 | `redact enable` | Enable PII redaction (sets `enabled: true` in config) |
 | `redact disable` | Disable PII redaction (sets `enabled: false` in config) |
 | `redact config` | Create and edit the config file |
