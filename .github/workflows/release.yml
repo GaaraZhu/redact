@@ -61,3 +61,21 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --notes-file release_notes.md \
             "${ARCHIVE}"
+
+      - name: Update Homebrew formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/GaaraZhu/homebrew-redact.git
+          cd homebrew-redact
+          sed -i '' \
+            "s|url \".*\"|url \"https://github.com/GaaraZhu/redact/releases/download/${GITHUB_REF_NAME}/redact-${VERSION}-aarch64-apple-darwin.tar.gz\"|" \
+            Formula/redact.rb
+          sed -i '' \
+            "s|sha256 \".*\"|sha256 \"${SHA256}\"|" \
+            Formula/redact.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/redact.rb
+          git commit -m "chore: update redact to ${GITHUB_REF_NAME}"
+          git push
