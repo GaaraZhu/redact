@@ -144,15 +144,6 @@ The `tk*` commands are managed by [toolkit](https://github.com/scott-abernethy/t
 | `curl` | Internal API / HTTP data source | Planned |
 | Raw DB clients (`psql`, `mysql`, …) | Direct database access | Planned |
 
-## Uninstallation
-
-```bash
-gate uninstall
-brew uninstall gate
-```
-
-`gate uninstall` removes everything gate added to your system — the hook from `~/.claude/settings.json`, the config directory at `~/.config/gate/`, and any gate-generated opencode plugins. It shows you exactly what will be deleted and asks for confirmation before touching anything.
-
 ## Configuration
 
 Config lives at `~/.config/gate/config.yaml` (override with `GATE_CONFIG`).
@@ -292,6 +283,15 @@ With `hash_values: true`, each placeholder gains an 8-char hex suffix derived fr
 ```
 
 Error responses from the underlying tool pass through unchanged.
+
+## Uninstallation
+
+```bash
+gate uninstall
+brew uninstall gate
+```
+
+`gate uninstall` removes everything gate added to your system — the hook from `~/.claude/settings.json`, the config directory at `~/.config/gate/`, and any gate-generated opencode plugins. It shows you exactly what will be deleted and asks for confirmation before touching anything.
 
 ## Troubleshooting
 
