@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>A deterministic privacy boundary between your data and AI. Intercepts query results before the model sees them — rule-driven, reproducible, and audit-ready.</strong>
+  <strong>A deterministic privacy boundary between your data and AI.<br>Intercepts query results before the model sees them — rule-driven, reproducible, and audit-ready.</strong>
 </p>
 
 <p align="center">
