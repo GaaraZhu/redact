@@ -5,7 +5,7 @@ use common::harness::is_agent_harness;
 pub fn run(enabled: bool) {
     if is_agent_harness() {
         exit_with_error(
-            "redact enable/disable is not available inside an agent harness. \
+            "gate enable/disable is not available inside an agent harness. \
              Run it in a terminal session outside the agent.",
         );
     }
@@ -27,10 +27,10 @@ pub fn run(enabled: bool) {
         .unwrap_or_else(|e| exit_with_error(&format!("failed to write config: {e}")));
 
     if enabled {
-        println!("redact enabled. PII redaction is ON.");
+        println!("gate enabled. PII redaction is ON.");
     } else {
-        println!("redact disabled. PII redaction is OFF.");
-        println!("Run `redact enable` or unset REDACT_DISABLED to re-enable.");
+        println!("gate disabled. PII redaction is OFF.");
+        println!("Run `gate enable` or unset GATE_DISABLED to re-enable.");
     }
 }
 
@@ -72,7 +72,7 @@ fn write_atomic(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("config path has no filename"))?;
-    let tmp = parent.join(format!("{file_name}.redact_tmp"));
+    let tmp = parent.join(format!("{file_name}.gate_tmp"));
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
@@ -121,9 +121,9 @@ mod tests {
 
     #[test]
     fn preserves_comments() {
-        let input = "# redact config\nenabled: true\n# tools below\ntools:\n";
+        let input = "# gate config\nenabled: true\n# tools below\ntools:\n";
         let out = set_enabled_in_yaml(input, false);
-        assert!(out.contains("# redact config"));
+        assert!(out.contains("# gate config"));
         assert!(out.contains("enabled: false"));
         assert!(out.contains("# tools below"));
     }

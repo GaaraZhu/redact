@@ -13,7 +13,7 @@ mod validate;
 
 #[derive(Parser)]
 #[command(
-    name = "redact",
+    name = "gate",
     version,
     about = "PII-filtering proxy for AI agent query tools"
 )]
@@ -24,7 +24,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// PreToolUse hook: rewrite matching Bash commands to route through redact run
+    /// PreToolUse hook: rewrite matching Bash commands to route through gate run
     Hook,
     /// Execute a tool with Gate 1 + Gate 2 PII redaction on its JSON output
     Run {
@@ -40,7 +40,7 @@ enum Commands {
         #[arg(long, default_value = "global")]
         scope: String,
     },
-    /// Manage the redact config file
+    /// Manage the gate config file
     Config {
         /// Print the resolved config file path and exit
         #[arg(long)]

@@ -1,5 +1,5 @@
-// Snake_case PreToolUse JSON is the single on-the-wire shape for redact hook.
-// Claude Code sends it directly; the opencode plugin (written by `redact init --harness opencode`)
+// Snake_case PreToolUse JSON is the single on-the-wire shape for gate hook.
+// Claude Code sends it directly; the opencode plugin (written by `gate init --harness opencode`)
 // translates opencode's tool.execute.before(input, output) arguments into this same shape before
 // piping to stdin. No opencode-specific Rust path is needed.
 use crate::command;
@@ -21,7 +21,7 @@ pub fn run() {
 }
 
 fn is_disabled_by_env() -> bool {
-    std::env::var("REDACT_DISABLED")
+    std::env::var("GATE_DISABLED")
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
 }
@@ -49,7 +49,7 @@ fn process(stdin: &str, config: &Config) -> Option<String> {
         .iter()
         .find(|t| !t.contains('=') || t.starts_with('-'))?;
     let first_basename = command::token_basename(first_cmd);
-    if first_basename == "redact" {
+    if first_basename == "gate" {
         let idx = tokens.iter().position(|t| t == first_cmd).unwrap_or(0);
         if tokens.get(idx + 1).map(String::as_str) == Some("run") {
             return None;
@@ -83,7 +83,7 @@ fn process(stdin: &str, config: &Config) -> Option<String> {
     if let Some(obj) = updated_input.as_object_mut() {
         obj.insert(
             "command".to_string(),
-            json!(format!("redact run -- {}", effective_command)),
+            json!(format!("gate run -- {}", effective_command)),
         );
     }
 
@@ -190,40 +190,37 @@ mod tests {
     #[test]
     fn passthrough_when_env_disabled() {
         let _guard = LOCK.lock().unwrap();
-        unsafe { std::env::set_var("REDACT_DISABLED", "1") };
+        unsafe { std::env::set_var("GATE_DISABLED", "1") };
         let result = process(
             &make_input("tkpsql --sql 'SELECT email FROM users'"),
             &default_config(),
         );
-        unsafe { std::env::remove_var("REDACT_DISABLED") };
+        unsafe { std::env::remove_var("GATE_DISABLED") };
         assert!(result.is_none());
     }
 
     #[test]
     fn env_disabled_true_string() {
         let _guard = LOCK.lock().unwrap();
-        unsafe { std::env::set_var("REDACT_DISABLED", "true") };
+        unsafe { std::env::set_var("GATE_DISABLED", "true") };
         let result = process(
             &make_input("tkpsql --sql 'SELECT email FROM users'"),
             &default_config(),
         );
-        unsafe { std::env::remove_var("REDACT_DISABLED") };
+        unsafe { std::env::remove_var("GATE_DISABLED") };
         assert!(result.is_none());
     }
 
     #[test]
     fn env_disabled_zero_does_not_disable() {
         let _guard = LOCK.lock().unwrap();
-        unsafe { std::env::set_var("REDACT_DISABLED", "0") };
+        unsafe { std::env::set_var("GATE_DISABLED", "0") };
         let result = process(
             &make_input("tkpsql --sql 'SELECT email FROM users'"),
             &default_config(),
         );
-        unsafe { std::env::remove_var("REDACT_DISABLED") };
-        assert!(
-            result.is_some(),
-            "REDACT_DISABLED=0 must not disable redact"
-        );
+        unsafe { std::env::remove_var("GATE_DISABLED") };
+        assert!(result.is_some(), "GATE_DISABLED=0 must not disable gate");
     }
 
     #[test]
@@ -247,7 +244,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run -- tkpsql"));
+        assert!(cmd.starts_with("gate run -- tkpsql"));
         assert!(cmd.contains("SELECT email FROM users"));
     }
 
@@ -264,7 +261,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run -- tkdbr"));
+        assert!(cmd.starts_with("gate run -- tkdbr"));
     }
 
     #[test]
@@ -276,7 +273,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run -- mysql"));
+        assert!(cmd.starts_with("gate run -- mysql"));
     }
 
     #[test]
@@ -288,18 +285,14 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run -- psql"));
+        assert!(cmd.starts_with("gate run -- psql"));
     }
 
     #[test]
     fn loop_avoidance() {
         let _guard = LOCK.lock().unwrap();
         let config = default_config();
-        assert!(process(
-            &make_input("redact run -- tkpsql --sql 'SELECT 1'"),
-            &config
-        )
-        .is_none());
+        assert!(process(&make_input("gate run -- tkpsql --sql 'SELECT 1'"), &config).is_none());
     }
 
     #[test]
@@ -383,7 +376,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run -- PGPASSWORD=secret psql"));
+        assert!(cmd.starts_with("gate run -- PGPASSWORD=secret psql"));
     }
 
     #[test]
@@ -438,7 +431,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run -- rtk psql"), "got: {cmd}");
+        assert!(cmd.starts_with("gate run -- rtk psql"), "got: {cmd}");
     }
 
     #[test]
@@ -455,7 +448,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(
-            cmd.starts_with("redact run -- wrapper1 wrapper2 psql"),
+            cmd.starts_with("gate run -- wrapper1 wrapper2 psql"),
             "got: {cmd}"
         );
     }
@@ -572,17 +565,14 @@ mod tests {
     #[test]
     fn no_json_tool_uses_original_command() {
         let _guard = LOCK.lock().unwrap();
-        // Tool in config but no json_tool: original command passed to redact run unchanged
+        // Tool in config but no json_tool: original command passed to gate run unchanged
         let config = make_config(&[("psql", Some("-c"), None)]);
         let out = process(&make_input("psql -c 'SELECT id FROM t'"), &config).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(
-            cmd.starts_with("redact run -- psql"),
-            "unexpected cmd: {cmd}"
-        );
+        assert!(cmd.starts_with("gate run -- psql"), "unexpected cmd: {cmd}");
         assert!(!cmd.contains("psql-json"), "should not rewrite: {cmd}");
     }
 
@@ -601,7 +591,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run --"), "got: {cmd}");
+        assert!(cmd.starts_with("gate run --"), "got: {cmd}");
     }
 
     #[test]
@@ -628,7 +618,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run --"), "got: {cmd}");
+        assert!(cmd.starts_with("gate run --"), "got: {cmd}");
     }
 
     #[test]
@@ -646,7 +636,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run --"), "got: {cmd}");
+        assert!(cmd.starts_with("gate run --"), "got: {cmd}");
         assert!(
             !cmd.contains("psql-json"),
             "must not rewrite to json_tool for nested invocation: {cmd}"
@@ -673,7 +663,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(
-            rewritten.starts_with("redact run -- tkpsql"),
+            rewritten.starts_with("gate run -- tkpsql"),
             "plugin payload must produce a rewrite: {rewritten}"
         );
     }
@@ -710,7 +700,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run --"), "got: {cmd}");
+        assert!(cmd.starts_with("gate run --"), "got: {cmd}");
     }
 
     #[test]
@@ -758,7 +748,7 @@ mod tests {
         let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.starts_with("redact run --"), "got: {cmd}");
+        assert!(cmd.starts_with("gate run --"), "got: {cmd}");
     }
 
     #[test]

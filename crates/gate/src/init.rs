@@ -3,13 +3,13 @@ use common::harness::is_agent_harness;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-const HOOK_COMMAND: &str = "redact hook";
+const HOOK_COMMAND: &str = "gate hook";
 
 pub fn run(harness: &str, scope: &str) {
     if is_agent_harness() {
         exit_with_error(
-            "redact init is not available inside an agent harness. \
-             Run `redact init` in a terminal session outside the agent.",
+            "gate init is not available inside an agent harness. \
+             Run `gate init` in a terminal session outside the agent.",
         );
     }
     match harness {
@@ -23,7 +23,7 @@ pub fn run(harness: &str, scope: &str) {
         "opencode" => crate::init_opencode::run(scope),
         _ => exit_with_error(&format!(
             "unsupported harness '{harness}'; supported: claude-code, opencode. \
-             Usage: redact init --harness <harness>"
+             Usage: gate init --harness <harness>"
         )),
     }
 }
@@ -32,14 +32,14 @@ fn run_with_path(path: &Path) {
     let settings = read_settings(path);
     match insert_hook(settings) {
         HookInsertResult::AlreadyInstalled => {
-            println!("redact hook is already installed in {}", path.display());
+            println!("gate hook is already installed in {}", path.display());
         }
         HookInsertResult::Done(updated) => {
             write_atomic(path, &updated).unwrap_or_else(|e| {
                 exit_with_error(&format!("failed to write {}: {e}", path.display()))
             });
-            println!("redact hook installed in {}", path.display());
-            println!("Run `redact config` to define which tools to intercept.");
+            println!("gate hook installed in {}", path.display());
+            println!("Run `gate config` to define which tools to intercept.");
         }
     }
 }
@@ -78,10 +78,10 @@ fn insert_hook(mut settings: Value) -> HookInsertResult {
         return HookInsertResult::AlreadyInstalled;
     }
 
-    // Remove any redact hook variants, then append the canonical entry
+    // Remove any gate hook variants, then append the canonical entry
     {
         let arr = settings["hooks"]["PreToolUse"].as_array_mut().unwrap();
-        arr.retain(|entry| !entry_has_redact_hook(entry));
+        arr.retain(|entry| !entry_has_gate_hook(entry));
         arr.push(new_hook_entry());
     }
 
@@ -124,7 +124,7 @@ fn has_exact_hook(arr: &[Value]) -> bool {
     })
 }
 
-pub(crate) fn entry_has_redact_hook(entry: &Value) -> bool {
+pub(crate) fn entry_has_gate_hook(entry: &Value) -> bool {
     entry
         .get("hooks")
         .and_then(|h| h.as_array())
@@ -132,15 +132,15 @@ pub(crate) fn entry_has_redact_hook(entry: &Value) -> bool {
             hooks.iter().any(|h| {
                 h.get("command")
                     .and_then(|c| c.as_str())
-                    .map(is_redact_hook_variant)
+                    .map(is_gate_hook_variant)
                     .unwrap_or(false)
             })
         })
         .unwrap_or(false)
 }
 
-/// Matches `redact hook` and variants like `/usr/local/bin/redact hook`.
-fn is_redact_hook_variant(cmd: &str) -> bool {
+/// Matches `gate hook` and variants like `/usr/local/bin/gate hook`.
+fn is_gate_hook_variant(cmd: &str) -> bool {
     let mut parts = cmd.splitn(2, ' ');
     let prog = parts.next().unwrap_or("");
     let rest = parts.next().unwrap_or("").trim_start();
@@ -148,7 +148,7 @@ fn is_redact_hook_variant(cmd: &str) -> bool {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(prog);
-    basename == "redact" && rest.starts_with("hook")
+    basename == "gate" && rest.starts_with("hook")
 }
 
 fn write_atomic(path: &Path, value: &Value) -> anyhow::Result<()> {
@@ -161,7 +161,7 @@ fn write_atomic(path: &Path, value: &Value) -> anyhow::Result<()> {
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("settings path has no filename"))?;
-    let tmp_path = parent.join(format!("{file_name}.redact_tmp"));
+    let tmp_path = parent.join(format!("{file_name}.gate_tmp"));
     std::fs::write(&tmp_path, &json_str)?;
     std::fs::rename(&tmp_path, path)?;
     Ok(())
@@ -204,7 +204,7 @@ mod tests {
         let settings = json!({
             "hooks": {
                 "PreToolUse": [
-                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "redact hook" }] }
+                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "gate hook" }] }
                 ]
             }
         });
@@ -219,7 +219,7 @@ mod tests {
         let settings = json!({
             "hooks": {
                 "PreToolUse": [
-                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/usr/local/bin/redact hook" }] }
+                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/usr/local/bin/gate hook" }] }
                 ]
             }
         });
@@ -285,8 +285,8 @@ mod tests {
         run_with_path(&path);
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let arr = v["hooks"]["PreToolUse"].as_array().unwrap();
-        let redact_count = arr.iter().filter(|e| entry_has_redact_hook(e)).count();
-        assert_eq!(redact_count, 1);
+        let gate_count = arr.iter().filter(|e| entry_has_gate_hook(e)).count();
+        assert_eq!(gate_count, 1);
     }
 
     #[test]
@@ -295,7 +295,7 @@ mod tests {
         let initial = json!({
             "hooks": {
                 "PreToolUse": [
-                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/usr/local/bin/redact hook" }] }
+                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/usr/local/bin/gate hook" }] }
                 ]
             }
         });
@@ -323,22 +323,22 @@ mod tests {
         assert!(serde_json::from_str::<Value>(&contents).is_ok());
     }
 
-    // is_redact_hook_variant
+    // is_gate_hook_variant
 
     #[test]
     fn variant_matches_exact_command() {
-        assert!(is_redact_hook_variant("redact hook"));
+        assert!(is_gate_hook_variant("gate hook"));
     }
 
     #[test]
     fn variant_matches_absolute_path() {
-        assert!(is_redact_hook_variant("/usr/local/bin/redact hook"));
+        assert!(is_gate_hook_variant("/usr/local/bin/gate hook"));
     }
 
     #[test]
     fn variant_does_not_match_other_commands() {
-        assert!(!is_redact_hook_variant("redact run -- tkpsql"));
-        assert!(!is_redact_hook_variant("some-tool run"));
-        assert!(!is_redact_hook_variant(""));
+        assert!(!is_gate_hook_variant("gate run -- tkpsql"));
+        assert!(!is_gate_hook_variant("some-tool run"));
+        assert!(!is_gate_hook_variant(""));
     }
 }

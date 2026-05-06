@@ -137,12 +137,12 @@ impl Config {
 }
 
 pub fn config_path() -> Result<std::path::PathBuf> {
-    if let Ok(path) = std::env::var("REDACT_CONFIG") {
+    if let Ok(path) = std::env::var("GATE_CONFIG") {
         return Ok(std::path::PathBuf::from(path));
     }
     let home =
         std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
-    Ok(std::path::PathBuf::from(home).join(".config/redact/config.yaml"))
+    Ok(std::path::PathBuf::from(home).join(".config/gate/config.yaml"))
 }
 
 #[cfg(test)]
@@ -158,17 +158,17 @@ mod tests {
         let _guard = LOCK.lock().unwrap();
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(yaml.as_bytes()).unwrap();
-        unsafe { std::env::set_var("REDACT_CONFIG", f.path()) };
+        unsafe { std::env::set_var("GATE_CONFIG", f.path()) };
         let result = Config::load();
-        unsafe { std::env::remove_var("REDACT_CONFIG") };
+        unsafe { std::env::remove_var("GATE_CONFIG") };
         result
     }
 
     fn load_missing() -> Result<Config> {
         let _guard = LOCK.lock().unwrap();
-        unsafe { std::env::set_var("REDACT_CONFIG", "/tmp/redact_nonexistent_xyz_abc.yaml") };
+        unsafe { std::env::set_var("GATE_CONFIG", "/tmp/redact_nonexistent_xyz_abc.yaml") };
         let result = Config::load();
-        unsafe { std::env::remove_var("REDACT_CONFIG") };
+        unsafe { std::env::remove_var("GATE_CONFIG") };
         result
     }
 

@@ -7,12 +7,12 @@ const TOOLKIT_TOOLS: &[&str] = &["tkpsql", "tkdbr"];
 pub fn run() {
     let config = Config::load().unwrap_or_else(|e| {
         exit_with_error(&format!(
-            "failed to load config: {e}. Run `redact config --init-only` to create a starter config."
+            "failed to load config: {e}. Run `gate config --init-only` to create a starter config."
         ));
     });
 
     if config.tools.is_empty() {
-        println!("No tools configured. Run `redact config` to add tools.");
+        println!("No tools configured. Run `gate config` to add tools.");
         return;
     }
 

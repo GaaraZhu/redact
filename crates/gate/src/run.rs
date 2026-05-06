@@ -7,20 +7,20 @@ use common::redactor::{redact, RedactPlan};
 use gate1::{build_plan, extract_columns};
 
 fn is_disabled_by_env() -> bool {
-    std::env::var("REDACT_DISABLED")
+    std::env::var("GATE_DISABLED")
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
 }
 
 pub fn run(args: Vec<String>) {
     if args.is_empty() {
-        exit_with_error("redact run: no command specified. Usage: redact run -- <tool> [args...]");
+        exit_with_error("gate run: no command specified. Usage: gate run -- <tool> [args...]");
     }
 
     let config = match Config::load() {
         Ok(c) => c,
         Err(e) => exit_with_error(&format!(
-            "failed to load config: {e}. Run `redact config --init-only` to create a starter config."
+            "failed to load config: {e}. Run `gate config --init-only` to create a starter config."
         )),
     };
 
@@ -38,9 +38,7 @@ pub fn run(args: Vec<String>) {
     let (env_tokens, cmd_args) = args.split_at(env_count);
 
     if cmd_args.is_empty() {
-        exit_with_error(
-            "redact run: no command after env vars. Usage: redact run -- <tool> [args...]",
-        );
+        exit_with_error("gate run: no command after env vars. Usage: gate run -- <tool> [args...]");
     }
 
     let env_pairs: Vec<(&str, &str)> = env_tokens
@@ -176,9 +174,7 @@ fn passthrough(args: Vec<String>) {
         .count();
     let (env_tokens, cmd_args) = args.split_at(env_count);
     if cmd_args.is_empty() {
-        exit_with_error(
-            "redact run: no command after env vars. Usage: redact run -- <tool> [args...]",
-        );
+        exit_with_error("gate run: no command after env vars. Usage: gate run -- <tool> [args...]");
     }
     let env_pairs: Vec<(&str, &str)> = env_tokens
         .iter()

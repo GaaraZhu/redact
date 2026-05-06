@@ -10,7 +10,7 @@ const RAW_CLIENTS: &[&str] = &["mysql", "psql"];
 pub fn run() {
     let config = Config::load().unwrap_or_else(|e| {
         exit_with_error(&format!(
-            "failed to load config: {e}. Run `redact config --init-only` to create a starter config."
+            "failed to load config: {e}. Run `gate config --init-only` to create a starter config."
         ));
     });
 
@@ -85,7 +85,7 @@ fn report_harness_installations() {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&contents) {
                     if v["hooks"]["PreToolUse"]
                         .as_array()
-                        .map(|arr| arr.iter().any(crate::init::entry_has_redact_hook))
+                        .map(|arr| arr.iter().any(crate::init::entry_has_gate_hook))
                         .unwrap_or(false)
                     {
                         found.push(format!("Claude Code ({})", path.display()));
@@ -97,10 +97,10 @@ fn report_harness_installations() {
 
     // opencode global
     if let Ok(home) = std::env::var("HOME") {
-        let path = PathBuf::from(&home).join(".config/opencode/plugin/redact.ts");
+        let path = PathBuf::from(&home).join(".config/opencode/plugin/gate.ts");
         if path.exists() {
             if let Ok(contents) = std::fs::read_to_string(&path) {
-                if crate::init_opencode::has_redact_header(&contents) {
+                if crate::init_opencode::has_gate_header(&contents) {
                     found.push(format!("opencode ({})", path.display()));
                 }
             }
@@ -108,18 +108,18 @@ fn report_harness_installations() {
     }
 
     // opencode project
-    let project_path = PathBuf::from(".opencode/plugin/redact.ts");
+    let project_path = PathBuf::from(".opencode/plugin/gate.ts");
     if project_path.exists() {
         if let Ok(contents) = std::fs::read_to_string(&project_path) {
-            if crate::init_opencode::has_redact_header(&contents) {
-                found.push("opencode (.opencode/plugin/redact.ts)".to_string());
+            if crate::init_opencode::has_gate_header(&contents) {
+                found.push("opencode (.opencode/plugin/gate.ts)".to_string());
             }
         }
     }
 
     if found.is_empty() {
         println!("No harness integrations detected.");
-        println!("Run `redact init` (Claude Code) or `redact init --harness opencode` to install.");
+        println!("Run `gate init` (Claude Code) or `gate init --harness opencode` to install.");
     } else {
         println!("Installed harness integrations:");
         for h in &found {

@@ -1,4 +1,4 @@
-# redact
+# gate
 
 PII-filtering CLI that transparently intercepts AI agent query commands and redacts sensitive data before it reaches the model context. See `docs/` for full context.
 
@@ -18,26 +18,26 @@ Status:
 - [x] Milestone 1 complete (config, patterns, harness, error — all 31 tests pass)
 - [x] Milestone 2 complete (Gate 2 redactor — 60 tests pass, false-negative rate = 0)
 - [x] Milestone 3 complete (Gate 1 tokenizer + column extractor + build_plan — 43 tests)
-- [x] Milestone 4 complete (redact run pipeline + integration tests — 119 tests pass)
+- [x] Milestone 4 complete (gate run pipeline + integration tests — 119 tests pass)
 - [x] Milestone 5 complete (hook config-driven + init + config_cmd + list + validate — 154 tests pass)
 - [x] Milestone 6 complete (README, error audit, criterion benchmark 25ms<100ms NFR, smoke test)
-- [x] Milestone 8 complete (opencode: `tool.execute.before` plugin + `redact init --harness opencode` + validate harness detection — 212 tests pass)
+- [x] Milestone 8 complete (opencode: `tool.execute.before` plugin + `gate init --harness opencode` + validate harness detection — 212 tests pass)
 - [ ] Milestone 9 — GitHub Copilot CLI: **DEFERRED** to a future release. Spec retained in `docs/plan.md`. Reason: Copilot CLI's `preToolUse` hook only supports deny-with-suggestion (advisory enforcement); we'll revisit when it gains a transparent-rewrite contract.
 
 Notes:
-`crates/redact/src/run.rs` is the production Gate 1 + Gate 2 pipeline. Loads config,
+`crates/gate/src/run.rs` is the production Gate 1 + Gate 2 pipeline. Loads config,
 runs gate1::extract_columns + gate1::build_plan on the SQL arg, spawns the subprocess,
 pipes stdout through common::redactor::redact. All subcommands fully implemented.
 
 ## Repository structure
 
 ```
-redact/
+gate/
   Cargo.toml            # workspace root
   crates/
     common/             # config, PII patterns, redactor (Gate 2), error types, harness detection
     gate1/              # SQL tokenizer + column extractor (Gate 1)
-    redact/             # main binary (all subcommands)
+    gate/               # main binary (all subcommands)
 ```
 
 ## Build and test commands
@@ -94,12 +94,12 @@ Do not advance the "Current step" in this file until all four items are checked.
 
 - **Gate 2 false negatives are worse than false positives.** When in doubt, redact. Default config errs toward redacting ambiguous matches.
 - **Never write query results to disk.** All processing is in-memory.
-- **No PII in logs or error messages.** `redact hook` and `redact run` must not log the AI's command line.
+- **No PII in logs or error messages.** `gate hook` and `gate run` must not log the AI's command line.
 - **`init.rs` writes must be atomic.** Write to a tempfile, then rename. Never write directly to `~/.claude/settings.json`.
-- **`redact init` and interactive `redact config` are blocked inside agent harnesses.** Check `is_agent_harness()` at the top of those handlers.
-- **`redact hook` must be fast on the passthrough path** — single-digit ms. It fires on every Bash command.
+- **`gate init` and interactive `gate config` are blocked inside agent harnesses.** Check `is_agent_harness()` at the top of those handlers.
+- **`gate hook` must be fast on the passthrough path** — single-digit ms. It fires on every Bash command.
 - **Errors use `{"error": "..."}` format with exit code 1**, matching toolkit convention.
-- **Hook output format must match the detected input format.** Today only the snake_case Claude Code shape is implemented (`hookSpecificOutput.updatedInput`). When opencode lands (Milestone 9), the snake_case shape is reused — the opencode plugin formats its payload as snake_case before piping to `redact hook`, so the Rust side stays single-format. Copilot CLI's camelCase deny-with-suggestion shape is specced in `docs/plan.md` Milestone 8 but deferred.
+- **Hook output format must match the detected input format.** Today only the snake_case Claude Code shape is implemented (`hookSpecificOutput.updatedInput`). When opencode lands (Milestone 9), the snake_case shape is reused — the opencode plugin formats its payload as snake_case before piping to `gate hook`, so the Rust side stays single-format. Copilot CLI's camelCase deny-with-suggestion shape is specced in `docs/plan.md` Milestone 8 but deferred.
 
 ## Key invariants by file
 
@@ -107,13 +107,13 @@ Do not advance the "Current step" in this file until all four items are checked.
 |---|---|
 | `common/redactor.rs` | The load-bearing safety net. Bugs here = PII leaks. Cover with golden-file tests before trusting it. |
 | `gate1/lib.rs` | Best-effort SQL parsing. Wrong here = false-negative on Gate 1, but Gate 2 catches it. Document limitations at the top of the file. |
-| `redact/hook.rs` | Runs on every Bash command — both perf and correctness matter. |
-| `redact/init.rs` | Touches the user's harness settings JSON. Idempotency and atomic writes are mandatory. |
-| `redact/run.rs` | Spawns subprocesses, handles their stdio. Most cross-component bugs live here. |
+| `gate/hook.rs` | Runs on every Bash command — both perf and correctness matter. |
+| `gate/init.rs` | Touches the user's harness settings JSON. Idempotency and atomic writes are mandatory. |
+| `gate/run.rs` | Spawns subprocesses, handles their stdio. Most cross-component bugs live here. |
 
 ## Testing approach
 
 - Write tests **before** or **alongside** each implementation step, not after.
 - Each milestone has an exit criterion in `docs/plan.md` — do not advance until it passes.
 - Milestone 2 (Gate 2 / `redactor.rs`) requires golden-file tests with realistic PII data. False-negative rate on the test corpus must be 0.
-- Integration tests for `redact run` use a fake-tool binary (a shell script emitting known JSON for known SQL).
+- Integration tests for `gate run` use a fake-tool binary (a shell script emitting known JSON for known SQL).

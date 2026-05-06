@@ -12,7 +12,7 @@ pub struct RedactPlan {
     /// Columns Gate 1 marked for guaranteed redaction.
     /// Key = JSON key name (lowercased, alias-resolved). Value = PII type label.
     pub forced_columns: HashMap<String, String>,
-    /// Warnings to merge into _redact_summary regardless of Gate 2's findings.
+    /// Warnings to merge into _gate_summary regardless of Gate 2's findings.
     pub warnings: Vec<String>,
     /// True when Gate 1 already exited with an error (action = reject).
     /// In that case `redact()` should never be called.
@@ -67,7 +67,7 @@ impl RedactSummary {
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Redact `payload` using `plan` (from Gate 1) and `config`.
-/// Returns the redacted JSON with `_redact_summary` attached according to payload shape.
+/// Returns the redacted JSON with `_gate_summary` attached according to payload shape.
 /// Error-shaped payloads (`{"error": ...}`) are returned unchanged.
 pub fn redact(payload: Value, plan: &RedactPlan, config: &PiiConfig) -> Value {
     let shape = detect_shape(&payload);
@@ -122,14 +122,14 @@ fn apply_summary(
     match shape {
         Shape::Object => {
             if let Value::Object(mut map) = payload {
-                map.insert("_redact_summary".to_string(), sv);
+                map.insert("_gate_summary".to_string(), sv);
                 Value::Object(map)
             } else {
                 payload
             }
         }
         Shape::Array => {
-            serde_json::json!({ "rows": payload, "_redact_summary": sv })
+            serde_json::json!({ "rows": payload, "_gate_summary": sv })
         }
         _ => payload,
     }
@@ -317,8 +317,8 @@ mod tests {
         assert_eq!(rows["email"], "[PII:email]");
         assert_eq!(rows["ssn"], "[PII:ssn]");
         assert_eq!(out["count"], 1);
-        assert_eq!(out["_redact_summary"]["redacted"], 2);
-        let types = out["_redact_summary"]["types"].as_array().unwrap();
+        assert_eq!(out["_gate_summary"]["redacted"], 2);
+        let types = out["_gate_summary"]["types"].as_array().unwrap();
         assert!(types.contains(&json!("email")));
         assert!(types.contains(&json!("ssn")));
     }
@@ -331,7 +331,7 @@ mod tests {
         let out = redact(input, &plan(), &cfg());
         assert_eq!(out["rows"][0]["email"], "[PII:email]");
         assert_eq!(out["rows"][0]["id"], 1);
-        assert_eq!(out["_redact_summary"]["redacted"], 1);
+        assert_eq!(out["_gate_summary"]["redacted"], 1);
     }
 
     // ── 3. Bare array + include_summary = false → shape preserved ─────────────
@@ -342,7 +342,7 @@ mod tests {
         let out = redact(input, &plan(), &cfg_no_summary());
         assert!(out.is_array());
         assert_eq!(out[0]["email"], "[PII:email]");
-        assert!(out[0].get("_redact_summary").is_none());
+        assert!(out[0].get("_gate_summary").is_none());
     }
 
     // ── 4. Error pass-through ─────────────────────────────────────────────────
@@ -352,7 +352,7 @@ mod tests {
         let input = json!({"error": "permission denied"});
         let out = redact(input.clone(), &plan(), &cfg());
         assert_eq!(out, input);
-        assert!(out.get("_redact_summary").is_none());
+        assert!(out.get("_gate_summary").is_none());
     }
 
     #[test]
@@ -372,7 +372,7 @@ mod tests {
         let profile_str = out["profile"].as_str().unwrap();
         let profile: Value = serde_json::from_str(profile_str).unwrap();
         assert_eq!(profile["email"], "[PII:email]");
-        assert_eq!(out["_redact_summary"]["redacted"], 1);
+        assert_eq!(out["_gate_summary"]["redacted"], 1);
     }
 
     #[test]
@@ -380,7 +380,7 @@ mod tests {
         let input = json!({"meta": "{\"count\": 5, \"status\": \"ok\"}"});
         let out = redact(input, &plan(), &cfg());
         assert_eq!(out["meta"], "{\"count\": 5, \"status\": \"ok\"}");
-        assert_eq!(out["_redact_summary"]["redacted"], 0);
+        assert_eq!(out["_gate_summary"]["redacted"], 0);
     }
 
     // ── 6. Null values in PII-named columns ──────────────────────────────────
@@ -391,7 +391,7 @@ mod tests {
         let out = redact(input, &plan(), &cfg());
         assert!(out["email"].is_null());
         assert!(out["ssn"].is_null());
-        assert_eq!(out["_redact_summary"]["redacted"], 0);
+        assert_eq!(out["_gate_summary"]["redacted"], 0);
     }
 
     // ── 7. Forced column from Gate 1 plan ─────────────────────────────────────
@@ -406,7 +406,7 @@ mod tests {
         let out = redact(input, &p, &cfg());
         assert_eq!(out["contact"], "[PII:email]");
         assert_eq!(out["id"], 1);
-        assert_eq!(out["_redact_summary"]["redacted"], 1);
+        assert_eq!(out["_gate_summary"]["redacted"], 1);
     }
 
     #[test]
@@ -416,7 +416,7 @@ mod tests {
             .push("SELECT * encountered, wildcard_policy=warn".to_string());
         let input = json!({"id": 1});
         let out = redact(input, &p, &cfg());
-        let warnings = out["_redact_summary"]["warnings"].as_array().unwrap();
+        let warnings = out["_gate_summary"]["warnings"].as_array().unwrap();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].as_str().unwrap().contains("wildcard_policy"));
     }
@@ -429,8 +429,8 @@ mod tests {
         let input = json!({"notes": "555-123-4567"});
         let out = redact(input, &plan(), &cfg());
         assert_eq!(out["notes"], "555-123-4567");
-        assert_eq!(out["_redact_summary"]["redacted"], 0);
-        let warnings = out["_redact_summary"]["warnings"].as_array().unwrap();
+        assert_eq!(out["_gate_summary"]["redacted"], 0);
+        let warnings = out["_gate_summary"]["warnings"].as_array().unwrap();
         assert!(!warnings.is_empty(), "expected a low-confidence warning");
     }
 
@@ -441,7 +441,7 @@ mod tests {
         let input = json!({"order_id": "4111111111111111"});
         let out = redact(input, &plan(), &cfg());
         assert_eq!(out["order_id"], "[PII:credit_card]");
-        assert_eq!(out["_redact_summary"]["redacted"], 1);
+        assert_eq!(out["_gate_summary"]["redacted"], 1);
     }
 
     #[test]
@@ -514,7 +514,7 @@ mod tests {
         let out = redact(input, &plan(), &cfg());
         assert_eq!(out["product_name"], "Widget Pro");
         assert_eq!(out["category_name"], "Tools");
-        assert_eq!(out["_redact_summary"]["redacted"], 0);
+        assert_eq!(out["_gate_summary"]["redacted"], 0);
     }
 
     // ── 13. Multiple PII types in one payload ─────────────────────────────────
@@ -527,8 +527,8 @@ mod tests {
             "card": "4111111111111111"
         });
         let out = redact(input, &plan(), &cfg());
-        assert_eq!(out["_redact_summary"]["redacted"], 3);
-        let types = out["_redact_summary"]["types"].as_array().unwrap();
+        assert_eq!(out["_gate_summary"]["redacted"], 3);
+        let types = out["_gate_summary"]["types"].as_array().unwrap();
         let type_strs: Vec<&str> = types.iter().map(|v| v.as_str().unwrap()).collect();
         assert!(type_strs.contains(&"email"));
         assert!(type_strs.contains(&"ssn"));
@@ -556,11 +556,11 @@ mod tests {
         let out = redact(input, &plan(), &cfg());
         if let Value::Object(map) = &out {
             let keys: Vec<&str> = map.keys().map(String::as_str).collect();
-            // Original order must be preserved; _redact_summary appended last.
+            // Original order must be preserved; _gate_summary appended last.
             assert_eq!(keys[0], "z_col");
             assert_eq!(keys[1], "a_col");
             assert_eq!(keys[2], "email");
-            assert_eq!(keys[3], "_redact_summary");
+            assert_eq!(keys[3], "_gate_summary");
         } else {
             panic!("expected object");
         }

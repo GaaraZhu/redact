@@ -4,7 +4,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
-const BIN: &str = env!("CARGO_BIN_EXE_redact");
+const BIN: &str = env!("CARGO_BIN_EXE_gate");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ fn redact_run(config: &str, tool: &str, extra: &[&str]) -> std::process::Output 
         .arg("--")
         .arg(tool)
         .args(extra)
-        .env("REDACT_CONFIG", config)
+        .env("GATE_CONFIG", config)
         .output()
         .unwrap()
 }
@@ -74,11 +74,11 @@ fn tkpsql_shape_redacts_pii_and_attaches_summary() {
     assert_eq!(v["rows"][0]["email"], "[PII:email]");
     assert_eq!(v["rows"][0]["ssn"], "[PII:ssn]");
     assert_eq!(v["count"], 1);
-    assert_eq!(v["_redact_summary"]["redacted"], 2);
+    assert_eq!(v["_gate_summary"]["redacted"], 2);
 }
 
 /// mysql-shaped output: bare JSON array.
-/// With include_summary=true (default), array is wrapped as {"rows": ..., "_redact_summary": ...}.
+/// With include_summary=true (default), array is wrapped as {"rows": ..., "_gate_summary": ...}.
 #[test]
 fn mysql_shape_bare_array_wrapped_with_summary() {
     let dir = tmp();
@@ -94,7 +94,7 @@ fn mysql_shape_bare_array_wrapped_with_summary() {
     assert_eq!(exit_code(&out), 0);
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     assert_eq!(v["rows"][0]["email"], "[PII:email]");
-    assert!(v.get("_redact_summary").is_some());
+    assert!(v.get("_gate_summary").is_some());
 }
 
 /// Error JSON from the tool must pass through unchanged — no summary attached.
@@ -109,7 +109,7 @@ fn error_json_passes_through_unchanged() {
     assert_eq!(exit_code(&out), 0);
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     assert_eq!(v["error"], "permission denied");
-    assert!(v.get("_redact_summary").is_none());
+    assert!(v.get("_gate_summary").is_none());
 }
 
 /// Non-JSON stdout must be forwarded to our stdout verbatim.
@@ -222,7 +222,7 @@ fn env_var_prefix_passed_to_subprocess() {
         .arg(&tool)
         .arg("--sql")
         .arg("SELECT id FROM users")
-        .env("REDACT_CONFIG", &config)
+        .env("GATE_CONFIG", &config)
         .output()
         .unwrap();
 
@@ -263,7 +263,7 @@ fn json_tool_binary_spawned_and_sql_arg_translated() {
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     assert_eq!(v["rows"][0]["email"], "[PII:email]");
     assert_eq!(v["rows"][0]["id"], 1);
-    assert_eq!(v["_redact_summary"]["redacted"], 1);
+    assert_eq!(v["_gate_summary"]["redacted"], 1);
 }
 
 /// json_tool rewrite with equals-form flag (-c=VALUE) must also be translated to --sql=VALUE.
@@ -328,8 +328,8 @@ fn wrapper_prefix_tool_detected_and_redacted() {
     assert_eq!(v["rows"][0]["id"], 1);
 }
 
-/// When `enabled: false` in config, `redact run` must forward the tool's output
-/// unchanged — no redaction, no `_redact_summary`.
+/// When `enabled: false` in config, `gate run` must forward the tool's output
+/// unchanged — no redaction, no `_gate_summary`.
 #[test]
 fn disabled_config_passes_through_without_redaction() {
     let dir = tmp();
@@ -355,10 +355,10 @@ fn disabled_config_passes_through_without_redaction() {
     assert_eq!(v["rows"][0]["email"], "alice@example.com");
     assert_eq!(v["rows"][0]["credit_card"], "4111111111111111");
     // No summary injected
-    assert!(v.get("_redact_summary").is_none());
+    assert!(v.get("_gate_summary").is_none());
 }
 
-/// When `REDACT_DISABLED=1`, `redact run` must forward the tool's output unchanged.
+/// When `GATE_DISABLED=1`, `gate run` must forward the tool's output unchanged.
 #[test]
 fn env_disabled_passes_through_without_redaction() {
     let dir = tmp();
@@ -375,15 +375,15 @@ fn env_disabled_passes_through_without_redaction() {
         .arg(&tool)
         .arg("--sql")
         .arg("SELECT id, email FROM users")
-        .env("REDACT_CONFIG", &config)
-        .env("REDACT_DISABLED", "1")
+        .env("GATE_CONFIG", &config)
+        .env("GATE_DISABLED", "1")
         .output()
         .unwrap();
 
     assert_eq!(exit_code(&out), 0);
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     assert_eq!(v["rows"][0]["email"], "bob@example.com");
-    assert!(v.get("_redact_summary").is_none());
+    assert!(v.get("_gate_summary").is_none());
 }
 
 /// `--sql=VALUE` form (equals sign) must be parsed correctly by find_flag_value.

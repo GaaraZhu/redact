@@ -316,6 +316,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gate"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "common",
+ "gate1",
+ "regex",
+ "serde_json",
+ "shell-words",
+ "tempfile",
+]
+
+[[package]]
 name = "gate1"
 version = "0.1.0"
 dependencies = [
@@ -579,20 +593,6 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
-]
-
-[[package]]
-name = "redact"
-version = "0.1.6"
-dependencies = [
- "anyhow",
- "clap",
- "common",
- "gate1",
- "regex",
- "serde_json",
- "shell-words",
- "tempfile",
 ]
 
 [[package]]

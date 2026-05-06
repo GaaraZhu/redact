@@ -6,7 +6,7 @@ use std::path::Path;
 pub fn run(show_path: bool, print_config: bool, init_only: bool) {
     let interactive = !show_path && !print_config && !init_only;
     if interactive && is_agent_harness() {
-        exit_with_error("redact config: interactive mode is not available inside an agent harness");
+        exit_with_error("gate config: interactive mode is not available inside an agent harness");
     }
 
     let path = match config_path() {
