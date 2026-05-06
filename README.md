@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>PII-filtering CLI that transparently intercepts AI agent query commands and gates sensitive data before it reaches the model context.</strong>
+  <strong>A deterministic privacy boundary between your data and AI. Intercepts query results before the model sees them — rule-driven, reproducible, and audit-ready.</strong>
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@ AI coding agents that access internal data sources can inadvertently exfiltrate 
 
 ## How it works
 
-`redact` integrates with your agent harness as a transparent rewrite hook. Every Bash command the AI tries to run passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
+`gate` integrates with your agent harness as a transparent rewrite hook. Every Bash command the AI tries to run passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
 
 The rewrite is **enforcing** in both supported harnesses — the AI cannot bypass it:
 
@@ -195,7 +195,7 @@ The env var takes precedence over the config file, so it works even when `enable
 
 ## Security model
 
-`redact` is one layer in a defense-in-depth stack:
+`gate` is one layer in a defense-in-depth stack:
 
 | Layer | Protects against |
 |---|---|
