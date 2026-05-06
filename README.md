@@ -256,17 +256,18 @@ unset GATE_DISABLED      # re-enable
 
 The env var takes precedence over the config file, so it works even when `enabled: true` is set.
 
-## Security model
+## Security scope
 
-`gate` is one layer in a defense-in-depth stack:
+`gate` intercepts the output of configured tools and redacts PII before it reaches the model context. It is not a sandbox — it only applies to commands explicitly listed under `tools:` in config. Commands outside that list pass through the harness unchanged.
 
-| Layer | Protects against |
-|---|---|
-| Agent harness sandbox | AI bypassing wrappers by invoking raw clients directly |
-| [toolkit](https://github.com/scott-abernethy/toolkit) | Write operations; credential exposure |
-| **gate** | PII leaking through query results |
+**What gate covers:** PII in query results returned by configured tools.
 
-`gate`'s config contains no credentials. For production deployments with sensitive credentials, wrap a toolkit-managed client (`tkpsql`/`tkdbr`) — toolkit handles credential injection.
+**What gate does not cover:**
+- Commands not listed in `tools:` — the AI can invoke them freely
+- Write operations (INSERT, UPDATE, DELETE) — gate does not inspect or block them
+- Credential exposure — gate holds no credentials; that is the responsibility of the underlying tool
+
+For a stronger boundary, combine gate with harness-level tool restrictions (e.g. limiting which Bash commands the agent is permitted to run) and database-level read-only roles.
 
 ## Output format
 
