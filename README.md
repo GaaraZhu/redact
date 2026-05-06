@@ -168,6 +168,14 @@ pii:
   redaction: "[PII:{type}]"
 
   include_summary: true
+
+  # When true, redacted values include a deterministic 8-char hex suffix derived
+  # from the original value (e.g. [PII:email:7f83b165]).  The same raw value always
+  # produces the same suffix, so the AI can correlate records across rows without
+  # seeing the underlying data.  Set hash_salt to a fixed secret for consistent
+  # hashes across runs; leave empty for zero-config determinism.
+  hash_values: false
+  hash_salt: ""
 ```
 
 ## Commands
@@ -212,6 +220,16 @@ Redacted output preserves the original JSON structure. PII values are replaced w
 ```json
 {
   "rows": [{"id": 1, "email": "[PII:email]", "ssn": "[PII:ssn]"}],
+  "count": 1,
+  "_gate_summary": {"redacted": 2, "types": ["email", "ssn"], "warnings": []}
+}
+```
+
+With `hash_values: true`, each placeholder gains an 8-char hex suffix derived from the original value. The same raw value always produces the same suffix, so the AI can join or deduplicate across rows without ever seeing the underlying data.
+
+```json
+{
+  "rows": [{"id": 1, "email": "[PII:email:7f83b165]", "ssn": "[PII:ssn:3c2a1b0e]"}],
   "count": 1,
   "_gate_summary": {"redacted": 2, "types": ["email", "ssn"], "warnings": []}
 }

@@ -27,4 +27,10 @@ pii:
   #   internal_id:
   #     regex: '\bID-\d{6}\b'
   #     confidence: 0.9
+
+  # Append a deterministic 8-char hex suffix to each redacted placeholder so the
+  # AI can correlate the same value across rows without seeing the raw data.
+  # Example output: [PII:email:7f83b165]
+  hash_values: false
+  hash_salt: ""     # set a fixed secret for consistent hashes across runs
 "#;
