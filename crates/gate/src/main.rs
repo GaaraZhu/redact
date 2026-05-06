@@ -9,6 +9,7 @@ mod init_opencode;
 mod list;
 mod run;
 mod starter;
+mod uninstall;
 mod validate;
 
 #[derive(Parser)]
@@ -60,6 +61,8 @@ enum Commands {
     Enable,
     /// Disable PII redaction (sets enabled: false in config)
     Disable,
+    /// Remove the hook, config directory, and any gate-generated opencode plugins
+    Uninstall,
     /// Print version
     Version,
 }
@@ -79,6 +82,7 @@ fn main() {
         Commands::Validate => validate::run(),
         Commands::Enable => enable_disable::run(true),
         Commands::Disable => enable_disable::run(false),
+        Commands::Uninstall => uninstall::run(),
         Commands::Version => println!("{}", env!("CARGO_PKG_VERSION")),
     }
 }
