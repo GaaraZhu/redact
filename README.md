@@ -19,13 +19,49 @@ AI coding agents that access internal data sources can inadvertently exfiltrate 
 
 ## Demo
 
-**Claude Code** — the agent asked for all users in plain English; `gate` intercepted the query and returned all columns with `email` and `credit_card` masked before they reached the model context.
+**Claude Code** — the agent asked for all users in plain English; `gate` intercepted the query and returned all columns with `full_name` and `email` masked before they reached the model context.
 
 ![gate blocking PII in a Claude Code session using tkpsql](assets/demo-claude-code.jpg)
 
-**opencode** — same query, same two-gate redaction pipeline, different harness. The `email` and `credit_card` columns are replaced with `[PII:email]` and `[PII:credit_card]` before the model sees the result.
+**OpenCode** — same query, same two-gate redaction pipeline, different harness. The `full_name` and `email` columns are replaced with `[PII:name]` and `[PII:email]` before the model sees the result.
 
 ![gate blocking PII in an opencode session using tkpsql](assets/demo-opencode.jpg)
+
+## Quickstart
+
+1. **Install gate**
+
+   ```bash
+   # Homebrew (recommended)
+   brew tap GaaraZhu/gate && brew install gate
+
+   # Or via cargo
+   cargo install --git https://github.com/GaaraZhu/gate
+   ```
+
+2. **Create your config** (opens `~/.config/gate/config.yaml` in your editor):
+
+   ```bash
+   gate config
+   ```
+
+3. **Register the hook** with your agent harness:
+
+   ```bash
+   # Claude Code
+   gate init
+
+   # OpenCode — global
+   gate init --harness opencode
+   # OpenCode — project-scoped
+   gate init --harness opencode --scope project
+   ```
+
+   Restart your opencode session after running `gate init` to load the plugin.
+
+4. **Start your AI session** — `gate` intercepts query commands automatically. No changes to your prompts or tools required.
+
+Run `gate validate` to confirm your config is valid before the first session.
 
 ## How it works
 
@@ -34,7 +70,7 @@ AI coding agents that access internal data sources can inadvertently exfiltrate 
 The rewrite is **enforcing** in both supported harnesses — the AI cannot bypass it:
 
 - **Claude Code** — registered as a [`PreToolUse` hook](https://docs.anthropic.com/en/docs/claude-code/hooks) in `~/.claude/settings.json`; Claude Code replaces the command via `updatedInput` before running it.
-- **opencode** — a TypeScript plugin's `tool.execute.before` handler mutates `output.args.command` before the subprocess spawns; same guarantee as Claude Code.
+- **OpenCode** — a TypeScript plugin's `tool.execute.before` handler mutates `output.args.command` before the subprocess spawns; same guarantee as Claude Code.
 
 Humans and CI scripts running outside the agent harness are unaffected — no wrapper scripts are installed on PATH.
 
@@ -50,51 +86,63 @@ AI asks to run: tkpsql query --sql "SELECT * FROM users"
          │ Gate 2: Value scanning      │  regex + column-name heuristics + Luhn check
          └──────────────┬──────────────┘
                         │
-         {"id": 1, "username": "alice", ..., "email": "[PII:email]", "credit_card": "[PII:credit_card]", "_gate_summary": {...}}
+         {"id": 1, "full_name": "[PII:name]", "email": "[PII:email]", "status": "active", ..., "_gate_summary": {...}}
+```
+
+**What the tool returns** (never reaches the model):
+```json
+{
+  "rows": [
+    {
+      "id": 1,
+      "full_name": "Alice Johnson",
+      "email": "alice.johnson@example.com",
+      "status": "active",
+      "created_at": "2023-01-15 10:30:00",
+      "last_login_at": "2024-05-06 14:22:00"
+    },
+    ...
+  ],
+  "count": 5
+}
+```
+
+**What the AI sees**:
+```json
+{
+  "rows": [
+    {
+      "id": 1,
+      "full_name": "[PII:name]",
+      "email": "[PII:email]",
+      "status": "active",
+      "created_at": "2023-01-15 10:30:00",
+      "last_login_at": "2024-05-06 14:22:00"
+    },
+    ...
+  ],
+  "count": 5,
+  "_gate_summary": {
+    "redacted": 10,
+    "types": ["name", "email"],
+    "warnings": ["SELECT * used — consider listing columns explicitly"]
+  }
+}
 ```
 
 ## Supported commands
 
 Any command that returns JSON can be configured as a `gate` target — database clients, internal API calls via `curl`, or any other tool your AI agent uses to fetch data. The AI sees the same structured response it always did, with PII values replaced in-place.
 
+The `tk*` commands are managed by [toolkit](https://github.com/scott-abernethy/toolkit), a credential-injecting CLI wrapper for database clients. `gate` works with any JSON-returning command — toolkit is not required.
+
 | Command | Type | Status |
 |---|---|---|
-| `tkpsql` | PostgreSQL ([toolkit](https://github.com/scott-abernethy/toolkit)-managed) | Supported |
-| `tkmsql` | MS SQL Server ([toolkit](https://github.com/scott-abernethy/toolkit)-managed) | Supported |
-| `tkdbr` | Databricks ([toolkit](https://github.com/scott-abernethy/toolkit)-managed) | Supported |
+| `tkpsql` | PostgreSQL (toolkit-managed) | Supported |
+| `tkmsql` | MS SQL Server (toolkit-managed) | Supported |
+| `tkdbr` | Databricks (toolkit-managed) | Supported |
 | `curl` | Internal API / HTTP data source | Planned |
 | Raw DB clients (`psql`, `mysql`, …) | Direct database access | Planned |
-
-## Installation
-
-```bash
-# Homebrew (recommended)
-brew tap GaaraZhu/gate
-brew install gate
-
-# Or via cargo
-cargo install --git https://github.com/GaaraZhu/gate
-
-# Create and edit your config
-gate config
-```
-
-Then register the hook with your agent harness:
-
-**Claude Code** ([claude.ai/code](https://claude.ai/code)) — transparent rewrite; the harness silently runs `gate run -- <your command>`:
-
-```bash
-gate init                         # writes ~/.claude/settings.json
-```
-
-**opencode** ([opencode.ai](https://opencode.ai)) — transparent rewrite via a TypeScript plugin that mutates `output.args.command` before the subprocess spawns (same enforcing guarantee as Claude Code):
-
-```bash
-gate init --harness opencode              # global: ~/.config/opencode/plugin/gate.ts
-gate init --harness opencode --scope project  # project: ./.opencode/plugin/gate.ts
-```
-
-Restart your opencode session after running `gate init` to load the plugin.
 
 ## Uninstallation
 
@@ -104,9 +152,6 @@ brew uninstall gate
 ```
 
 `gate uninstall` removes everything gate added to your system — the hook from `~/.claude/settings.json`, the config directory at `~/.config/gate/`, and any gate-generated opencode plugins. It shows you exactly what will be deleted and asks for confirmation before touching anything.
-
-> **Roadmap — additional harnesses.**
-> - **GitHub Copilot CLI** — deferred to a future release. Copilot CLI's `preToolUse` hook only supports deny-with-suggestion (no transparent rewrite), which makes the integration *advisory* — strictly safer than no hook, but the AI could in principle ignore the suggested rewrite. We're holding the integration until either Copilot CLI gains an `updatedInput` equivalent or the user demand justifies shipping the advisory-only mode.
 
 ## Configuration
 
@@ -144,7 +189,7 @@ pii:
     - birthdate
 
   action: redact          # warn | redact | reject
-  wildcard_policy: warn   # warn | reject
+  wildcard_policy: warn   # warn | reject — applies when the AI uses SELECT * (no explicit column list)
 
   # Built-in patterns (shown here for reference; override by redefining the key).
   # credit_card is handled by the Luhn algorithm (https://en.wikipedia.org/wiki/Luhn_algorithm) and is always confidence 1.0.
@@ -199,8 +244,8 @@ pii:
 | `gate list` | Show configured tools and their SQL flags |
 | `gate validate` | Check config for errors and warnings |
 | `gate version` | Print version |
-
-`gate run` and `gate hook` are invoked by the hook machinery, not by users directly.
+| `gate run -- <cmd>` | *(internal)* Run a command through the gate pipeline — invoked by the hook, not directly |
+| `gate hook` | *(internal)* Hook entry point — invoked by the harness, not directly |
 
 To disable redaction for a single shell session without editing the config file, set the `GATE_DISABLED` environment variable:
 
@@ -247,18 +292,33 @@ With `hash_values: true`, each placeholder gains an 8-char hex suffix derived fr
 
 Error responses from the underlying tool pass through unchanged.
 
+## Troubleshooting
+
+**Commands are passing through unredacted.**
+Run `gate validate` to check for config errors. Confirm the hook is registered by checking that `~/.claude/settings.json` contains a `gate hook` entry — if not, re-run `gate init`. Then restart your agent session so the harness picks up the updated settings.
+
+**`gate: command not found` inside the agent session.**
+The shell PATH inside the harness may differ from your login shell. Find the full path with `which gate` in a normal terminal, then set `GATE_BIN` to that path or add the directory to the harness's PATH in your shell profile.
+
+**OpenCode isn't intercepting commands after `gate init`.**
+The plugin is loaded at session start — restart your opencode session after running `gate init --harness opencode`.
+
+**Config file not found.**
+Run `gate config` to create `~/.config/gate/config.yaml`. If you store the config elsewhere, set `GATE_CONFIG=/path/to/config.yaml` in your environment.
+
+**Non-PII values are being redacted (false positives).**
+Raise `confidence_threshold` (e.g. to `0.9`) to reduce over-redaction, or narrow the regex for the offending pattern in the `patterns` block. Run `gate validate` after editing to catch syntax errors.
+
+**`_gate_summary` warns about `SELECT *`.**
+Gate 1 can't infer column types from a wildcard query, so every value is passed to Gate 2's regex scanner. Use an explicit column list (`SELECT id, status, created_at FROM users`) to skip the warning and avoid scanning non-PII columns.
+
+## Roadmap
+
+**GitHub Copilot CLI** — deferred to a future release. Copilot CLI's `preToolUse` hook only supports deny-with-suggestion (no transparent rewrite), which makes the integration *advisory* — strictly safer than no hook, but the AI could in principle ignore the suggested rewrite. We're holding the integration until either Copilot CLI gains an `updatedInput` equivalent or the user demand justifies shipping the advisory-only mode.
+
 ## Contributing
 
-Bug reports and pull requests are welcome. For significant changes, open an issue first to discuss the proposal.
-
-```bash
-cargo build
-cargo test --all
-cargo clippy -- -D warnings
-cargo fmt --check
-```
-
-All four checks must pass before submitting a PR.
+Bug reports and pull requests are welcome. For significant changes, open an issue first to discuss the proposal. See [CLAUDE.md](CLAUDE.md) for the full dev setup and pre-commit checklist.
 
 ## License
 
