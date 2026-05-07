@@ -2,6 +2,7 @@ use regex::Regex;
 use std::sync::OnceLock;
 
 pub const COLUMN_DENYLIST: &[&str] = &[
+    // Names
     "email",
     "ssn",
     "dob",
@@ -18,6 +19,38 @@ pub const COLUMN_DENYLIST: &[&str] = &[
     "surname",
     "birthdate",
     "salutation",
+    // Demographics
+    "gender",
+    "nationality",
+    "citizenship",
+    // Address
+    "address",
+    "latitude",
+    "longitude",
+    // Financial
+    "iban",
+    "salary",
+    // Employment
+    "employee_id",
+    "staff_id",
+    "student_id",
+    // Government IDs
+    "national_id",
+    "immigration_id",
+    // Health
+    "medical",
+    "biometric",
+    "fingerprint",
+    "prescription",
+    "diagnosis",
+    "vaccination",
+    "disability",
+    // Online & technical
+    "username",
+    "auth_token",
+    // Family
+    "next_of_kin",
+    "emergency_contact",
 ];
 
 pub struct BuiltinPattern {
@@ -49,25 +82,29 @@ pub const BUILTIN_PATTERNS: &[BuiltinPattern] = &[
     },
 ];
 
-/// Token-to-PII-type synonym table. Entries labelled "bigram" are matched by joining
-/// consecutive token pairs (e.g. "first"+"name" → "firstname"), not as bare tokens.
-/// First match wins; table order is the tie-breaker.
+/// Token-to-PII-type synonym table. Single-token entries match bare column tokens;
+/// bigram entries (e.g. "firstname") match two consecutive tokens joined without
+/// separator; trigram entries match three. Longer passes run first so specific
+/// matches win over shorter ones. Table order is the tiebreaker within a pass.
 const TOKEN_SYNONYMS: &[(&str, &str)] = &[
+    // ── Email ─────────────────────────────────────────────────────────────────
     ("email", "email"),
     ("mail", "email"),
+    // ── Phone ─────────────────────────────────────────────────────────────────
     ("phone", "phone"),
     ("mobile", "phone"),
     ("tel", "phone"),
     ("fax", "phone"),
+    // ── SSN ───────────────────────────────────────────────────────────────────
     ("ssn", "ssn"),
+    ("socialsecuritynumber", "ssn"), // trigram: social_security_number
+    // ── DOB ───────────────────────────────────────────────────────────────────
     ("dob", "dob"),
     ("birth", "dob"),
     ("birthday", "dob"),
     ("birthdate", "dob"),
-    // Bigram/trigram entries for DOB — matched before bare "birth" via pass ordering.
     ("dateofbirth", "dob"), // trigram: date_of_birth
-    ("birthdate", "dob"),   // bigram:  birth_date (already a token too, kept for clarity)
-    // LOB (location of birth) — bigrams and trigrams checked before bare "birth" → dob.
+    // LOB — longer matches run first so these win over bare "birth" → dob.
     ("birthcountry", "lob"),    // birth_country
     ("birthplace", "lob"),      // birth_place
     ("birthcity", "lob"),       // birth_city
@@ -79,18 +116,22 @@ const TOKEN_SYNONYMS: &[(&str, &str)] = &[
     ("cityofbirth", "lob"),     // city_of_birth      (trigram)
     ("stateofbirth", "lob"),    // state_of_birth     (trigram)
     ("locationofbirth", "lob"), // location_of_birth  (trigram)
+    // ── Credit Card ───────────────────────────────────────────────────────────
     ("card", "credit_card"),
+    // ── CVV ───────────────────────────────────────────────────────────────────
     ("cvv", "cvv"),
     ("cvc", "cvv"),
+    // ── Passport / License / NPI / IP ─────────────────────────────────────────
     ("passport", "passport"),
     ("npi", "npi"),
     ("license", "license"),
     ("ip", "ip"),
+    // ── Salutation ────────────────────────────────────────────────────────────
     ("salutation", "salutation"),
+    // ── Name (surname single-token + compound bigrams) ────────────────────────
+    // "product_name" → bigram "productname" → no match (safe).
+    // "first_name"   → bigram "firstname"   → match.
     ("surname", "name"),
-    // Bigram entries: matched via consecutive token pairs joined without separator.
-    // "product_name" → ["product","name"] → bigram "productname" → no match (safe).
-    // "first_name"   → ["first","name"]   → bigram "firstname"   → match.
     ("firstname", "name"),
     ("firstnames", "name"),
     ("lastname", "name"),
@@ -100,6 +141,72 @@ const TOKEN_SYNONYMS: &[(&str, &str)] = &[
     ("givennames", "name"),
     ("familyname", "name"),
     ("familynames", "name"),
+    // ── Demographics ──────────────────────────────────────────────────────────
+    ("gender", "gender"),
+    ("sex", "gender"),
+    ("nationality", "nationality"),
+    ("citizenship", "nationality"),
+    // ── Government IDs ────────────────────────────────────────────────────────
+    // Use bigrams/trigrams for ambiguous bare tokens (e.g. "national", "tax").
+    ("nationalid", "national_id"),       // national_id
+    ("taxnumber", "tax_id"),             // tax_number
+    ("taxid", "tax_id"),                 // tax_id
+    ("irdnumber", "tax_id"),             // NZ Inland Revenue number
+    ("visanumber", "visa"),              // visa_number
+    ("visaid", "visa"),                  // visa_id
+    ("residentnumber", "resident_id"),   // resident_number
+    ("residentid", "resident_id"),       // resident_id
+    ("immigrationid", "immigration_id"), // immigration_id
+    // ── Address & Location ────────────────────────────────────────────────────
+    ("address", "address"),
+    ("addr", "address"),
+    ("street", "address"),
+    ("postcode", "address"),
+    ("suburb", "address"),
+    ("zip", "address"),
+    ("city", "address"),
+    ("state", "address"),
+    ("province", "address"),
+    ("country", "address"),
+    ("latitude", "gps"),
+    ("longitude", "gps"),
+    ("gps", "gps"),
+    ("coordinates", "gps"),
+    // ── Financial ─────────────────────────────────────────────────────────────
+    ("bank", "bank_account"),
+    ("iban", "iban"),
+    ("swift", "swift"),
+    ("bsb", "bank_account"), // AU/NZ bank-state branch code
+    ("routing", "bank_account"),
+    ("expiry", "expiry"),
+    ("accountnumber", "bank_account"), // account_number (bigram; bare "account" is not flagged)
+    ("routingnumber", "bank_account"), // routing_number
+    // ── Employment ────────────────────────────────────────────────────────────
+    ("salary", "salary"),
+    ("wage", "salary"),
+    ("jobtitle", "job_title"), // job_title
+    // ── Health & Medical ──────────────────────────────────────────────────────
+    ("medical", "medical"),
+    ("health", "health"),
+    ("diagnosis", "medical"),
+    ("prescription", "medical"),
+    ("disability", "medical"),
+    ("vaccination", "medical"),
+    ("vaccine", "medical"),
+    // ── Online & Technical Identifiers ────────────────────────────────────────
+    ("username", "username"),
+    ("login", "login"),
+    ("authtoken", "auth_token"),   // auth_token
+    ("macaddress", "mac_address"), // mac_address (bigram; bare "mac" is not flagged)
+    // ── Biometric ─────────────────────────────────────────────────────────────
+    ("biometric", "biometric"),
+    ("fingerprint", "biometric"),
+    ("voiceprint", "biometric"),
+    ("retina", "biometric"),
+    ("facescan", "biometric"), // face_scan
+    // ── Family & Relationships ────────────────────────────────────────────────
+    ("nextofkin", "next_of_kin"),              // trigram: next_of_kin
+    ("emergencycontact", "emergency_contact"), // emergency_contact
 ];
 
 /// Split `name` into lowercase tokens, handling underscore/hyphen separators and camelCase.
@@ -138,6 +245,41 @@ const NAME_PREFIXES: &[&str] = &[
     "owner",
     "recipient",
     "sender",
+    // Additional person-name qualifiers
+    "preferred", // preferred_name
+    "middle",    // middle_name
+    "maiden",    // maiden_name
+    "spouse",    // spouse_name
+    "parent",    // parent_name
+    "guardian",  // guardian_name
+    "manager",   // manager_name
+    "sibling",   // sibling_name
+    "children",  // children_names
+];
+
+/// Person-entity prefixes for ID/number columns.
+/// `<prefix>_id` or `<prefix>_number` → "id".
+/// Only entities where the bare prefix alone would be too generic to flag.
+const PERSON_ID_PREFIXES: &[&str] = &[
+    "employee",
+    "staff",
+    "student",
+    "member",
+    "client",
+    "customer",
+    "consumer",
+    "cust",
+    "crm",
+    "person",
+    "manager",
+    // Online / technical identifiers
+    "user",
+    "device",
+    "session",
+    "cookie",
+    "advertising",
+    // Catch-all short aliases
+    "external",
 ];
 
 /// Returns the PII type label if any token (or consecutive token bigram) of `column_name`
@@ -172,6 +314,14 @@ pub fn classify_column(column_name: &str) -> Option<&'static str> {
     for pair in tokens.windows(2) {
         if NAME_PREFIXES.contains(&pair[0].as_str()) && (pair[1] == "name" || pair[1] == "names") {
             return Some("name");
+        }
+    }
+    // Entity-id pass: <person-entity-prefix> + "id"/"number" → "id"
+    for pair in tokens.windows(2) {
+        if PERSON_ID_PREFIXES.contains(&pair[0].as_str())
+            && (pair[1] == "id" || pair[1] == "number")
+        {
+            return Some("id");
         }
     }
     None
@@ -613,5 +763,166 @@ mod tests {
         assert_eq!(classify_column("status"), None);
         assert_eq!(classify_column("amount"), None);
         assert_eq!(classify_column("description"), None);
+    }
+
+    // ── New coverage ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn classify_additional_name_forms() {
+        assert_eq!(classify_column("middle_name"), Some("name"));
+        assert_eq!(classify_column("preferred_name"), Some("name"));
+        assert_eq!(classify_column("maiden_name"), Some("name"));
+        assert_eq!(classify_column("spouse_name"), Some("name"));
+        assert_eq!(classify_column("parent_name"), Some("name"));
+        assert_eq!(classify_column("guardian_name"), Some("name"));
+        assert_eq!(classify_column("manager_name"), Some("name"));
+        assert_eq!(classify_column("sibling_name"), Some("name"));
+        assert_eq!(classify_column("children_names"), Some("name"));
+    }
+
+    #[test]
+    fn classify_demographics() {
+        assert_eq!(classify_column("gender"), Some("gender"));
+        assert_eq!(classify_column("sex"), Some("gender"));
+        assert_eq!(classify_column("sex_at_birth"), Some("gender"));
+        assert_eq!(classify_column("gender_code"), Some("gender"));
+        assert_eq!(classify_column("nationality"), Some("nationality"));
+        assert_eq!(classify_column("citizenship"), Some("nationality"));
+    }
+
+    #[test]
+    fn classify_government_ids() {
+        assert_eq!(classify_column("national_id"), Some("national_id"));
+        assert_eq!(classify_column("social_security_number"), Some("ssn"));
+        assert_eq!(classify_column("tax_number"), Some("tax_id"));
+        assert_eq!(classify_column("tax_id"), Some("tax_id"));
+        assert_eq!(classify_column("ird_number"), Some("tax_id"));
+        assert_eq!(classify_column("visa_number"), Some("visa"));
+        assert_eq!(classify_column("visa_id"), Some("visa"));
+        assert_eq!(classify_column("resident_number"), Some("resident_id"));
+        assert_eq!(classify_column("resident_id"), Some("resident_id"));
+        assert_eq!(classify_column("immigration_id"), Some("immigration_id"));
+    }
+
+    #[test]
+    fn classify_address() {
+        assert_eq!(classify_column("address"), Some("address"));
+        assert_eq!(classify_column("home_address"), Some("address"));
+        assert_eq!(classify_column("billing_address"), Some("address"));
+        assert_eq!(classify_column("shipping_address"), Some("address"));
+        assert_eq!(classify_column("street_address"), Some("address"));
+        assert_eq!(classify_column("addr"), Some("address"));
+        assert_eq!(classify_column("postcode"), Some("address"));
+        assert_eq!(classify_column("zip_code"), Some("address"));
+        assert_eq!(classify_column("suburb"), Some("address"));
+        assert_eq!(classify_column("city"), Some("address"));
+        assert_eq!(classify_column("state"), Some("address"));
+        assert_eq!(classify_column("province"), Some("address"));
+        assert_eq!(classify_column("country"), Some("address"));
+        assert_eq!(classify_column("latitude"), Some("gps"));
+        assert_eq!(classify_column("longitude"), Some("gps"));
+        assert_eq!(classify_column("gps"), Some("gps"));
+        assert_eq!(classify_column("gps_coordinates"), Some("gps"));
+    }
+
+    #[test]
+    fn classify_address_does_not_override_lob() {
+        // city/state/country inside birth-location bigrams/trigrams must still → lob
+        assert_eq!(classify_column("country_of_birth"), Some("lob"));
+        assert_eq!(classify_column("city_of_birth"), Some("lob"));
+        assert_eq!(classify_column("state_of_birth"), Some("lob"));
+        assert_eq!(classify_column("birth_country"), Some("lob"));
+        assert_eq!(classify_column("birth_city"), Some("lob"));
+        assert_eq!(classify_column("birth_state"), Some("lob"));
+    }
+
+    #[test]
+    fn classify_financial() {
+        assert_eq!(classify_column("bank_account"), Some("bank_account"));
+        assert_eq!(classify_column("account_number"), Some("bank_account"));
+        assert_eq!(classify_column("iban"), Some("iban"));
+        assert_eq!(classify_column("swift_code"), Some("swift"));
+        assert_eq!(classify_column("routing_number"), Some("bank_account"));
+        assert_eq!(classify_column("bsb"), Some("bank_account"));
+        assert_eq!(classify_column("expiry_date"), Some("expiry"));
+        assert_eq!(classify_column("card_expiry"), Some("credit_card")); // "card" token matches first
+    }
+
+    #[test]
+    fn classify_employment() {
+        assert_eq!(classify_column("employee_id"), Some("id"));
+        assert_eq!(classify_column("staff_id"), Some("id"));
+        assert_eq!(classify_column("student_id"), Some("id"));
+        assert_eq!(classify_column("customer_id"), Some("id"));
+        assert_eq!(classify_column("salary"), Some("salary"));
+        assert_eq!(classify_column("wage"), Some("salary"));
+        assert_eq!(classify_column("job_title"), Some("job_title"));
+    }
+
+    #[test]
+    fn classify_health() {
+        assert_eq!(classify_column("medical_record_number"), Some("medical"));
+        assert_eq!(classify_column("medical_condition"), Some("medical"));
+        assert_eq!(classify_column("health_id"), Some("health"));
+        assert_eq!(classify_column("diagnosis"), Some("medical"));
+        assert_eq!(classify_column("prescription"), Some("medical"));
+        assert_eq!(classify_column("disability_status"), Some("medical"));
+        assert_eq!(classify_column("vaccination_status"), Some("medical"));
+        assert_eq!(classify_column("vaccine"), Some("medical"));
+    }
+
+    #[test]
+    fn classify_online_identifiers() {
+        assert_eq!(classify_column("username"), Some("username"));
+        assert_eq!(classify_column("user_name"), Some("username"));
+        assert_eq!(classify_column("login"), Some("login"));
+        assert_eq!(classify_column("user_id"), Some("id"));
+        assert_eq!(classify_column("device_id"), Some("id"));
+        assert_eq!(classify_column("session_id"), Some("id"));
+        assert_eq!(classify_column("cookie_id"), Some("id"));
+        assert_eq!(classify_column("advertising_id"), Some("id"));
+        assert_eq!(classify_column("auth_token"), Some("auth_token"));
+        assert_eq!(classify_column("mac_address"), Some("mac_address"));
+    }
+
+    #[test]
+    fn classify_biometric() {
+        assert_eq!(classify_column("fingerprint"), Some("biometric"));
+        assert_eq!(classify_column("biometric_id"), Some("biometric"));
+        assert_eq!(classify_column("voiceprint"), Some("biometric"));
+        assert_eq!(classify_column("retina_scan"), Some("biometric"));
+        assert_eq!(classify_column("face_scan"), Some("biometric"));
+    }
+
+    #[test]
+    fn classify_family_relationships() {
+        assert_eq!(classify_column("next_of_kin"), Some("next_of_kin"));
+        assert_eq!(
+            classify_column("emergency_contact"),
+            Some("emergency_contact")
+        );
+        assert_eq!(classify_column("spouse_name"), Some("name"));
+        assert_eq!(classify_column("parent_name"), Some("name"));
+    }
+
+    #[test]
+    fn classify_common_short_aliases() {
+        assert_eq!(classify_column("cust_id"), Some("id"));
+        assert_eq!(classify_column("client_id"), Some("id"));
+        assert_eq!(classify_column("member_id"), Some("id"));
+        assert_eq!(classify_column("crm_id"), Some("id"));
+        assert_eq!(classify_column("person_number"), Some("id"));
+        assert_eq!(classify_column("consumer_number"), Some("id"));
+        assert_eq!(classify_column("external_id"), Some("id"));
+    }
+
+    #[test]
+    fn person_id_pass_does_not_flag_generic_entity_ids() {
+        // Non-person entity + _id must not trigger
+        assert_eq!(classify_column("product_id"), None);
+        assert_eq!(classify_column("order_id"), None);
+        assert_eq!(classify_column("account_id"), None);
+        assert_eq!(classify_column("vendor_id"), None);
+        assert_eq!(classify_column("category_id"), None);
     }
 }
