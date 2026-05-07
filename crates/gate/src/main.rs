@@ -27,7 +27,8 @@ struct Cli {
 enum Commands {
     /// PreToolUse hook: rewrite matching Bash commands to route through gate run
     Hook,
-    /// Execute a tool with Gate 1 + Gate 2 PII redaction on its JSON output
+    /// Execute a tool with Gate 1 + Gate 2 PII redaction on its JSON output.
+    /// With no args, reads JSON from stdin and applies Gate 2 directly.
     Run {
         /// Print per-field redaction decisions to stderr for debugging
         #[arg(long)]

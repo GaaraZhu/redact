@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{self, Read, Write};
 
 use crate::command;
 use common::config::Config;
@@ -13,16 +13,22 @@ fn is_disabled_by_env() -> bool {
 }
 
 pub fn run(args: Vec<String>, verbose: bool) {
-    if args.is_empty() {
-        exit_with_error("gate run: no command specified. Usage: gate run -- <tool> [args...]");
-    }
-
     let config = match Config::load() {
         Ok(c) => c,
         Err(e) => exit_with_error(&format!(
             "failed to load config: {e}. Run `gate config --init-only` to create a starter config."
         )),
     };
+
+    // Stdin mode: no command args — read JSON from stdin and apply Gate 2 directly.
+    if args.is_empty() {
+        if !config.enabled || is_disabled_by_env() {
+            io::copy(&mut io::stdin(), &mut io::stdout()).ok();
+            return;
+        }
+        redact_stdin(verbose, &config);
+        return;
+    }
 
     // When redaction is disabled (config or env var), act as a transparent passthrough.
     if !config.enabled || is_disabled_by_env() {
@@ -124,6 +130,35 @@ pub fn run(args: Vec<String>, verbose: bool) {
     // Gate 2
     let redacted = redact(payload, &plan, &config.pii);
 
+    println!("{}", serde_json::to_string(&redacted).unwrap());
+}
+
+/// Read JSON from stdin, apply Gate 2 redaction, and write to stdout.
+/// Gate 1 is skipped (no SQL to parse); only pattern/column-name matching runs.
+fn redact_stdin(verbose: bool, config: &Config) {
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input).unwrap_or_default();
+
+    let plan = RedactPlan {
+        verbose,
+        ..RedactPlan::empty()
+    };
+
+    if verbose {
+        eprintln!("[gate] === Gate 1 ===");
+        eprintln!("[gate] stdin mode: no SQL, Gate 1 skipped");
+        eprintln!("[gate] === Gate 2: per-field decisions ===");
+    }
+
+    let payload: serde_json::Value = match serde_json::from_str(input.trim()) {
+        Ok(v) => v,
+        Err(_) => {
+            print!("{input}");
+            return;
+        }
+    };
+
+    let redacted = redact(payload, &plan, &config.pii);
     println!("{}", serde_json::to_string(&redacted).unwrap());
 }
 
