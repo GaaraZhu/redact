@@ -34,10 +34,20 @@ fn process(stdin: &str, config: &Config) -> Option<String> {
 
     let hook_input: Value = serde_json::from_str(stdin).ok()?;
 
+    // Claude Code chains hooks by passing each hook's raw output as the next hook's stdin.
+    // A prior hook (e.g. RTK) returns hookSpecificOutput.updatedInput.command; fall back to
+    // that path when tool_input is absent so gate hook still intercepts in a chained position.
     let command = hook_input
         .get("tool_input")
         .and_then(|ti| ti.get("command"))
-        .and_then(|c| c.as_str())?
+        .and_then(|c| c.as_str())
+        .or_else(|| {
+            hook_input
+                .get("hookSpecificOutput")
+                .and_then(|h| h.get("updatedInput"))
+                .and_then(|u| u.get("command"))
+                .and_then(|c| c.as_str())
+        })?
         .to_string();
 
     let tokens = shell_words::split(&command)
@@ -84,8 +94,19 @@ fn process(stdin: &str, config: &Config) -> Option<String> {
         command::ToolMatch::Nested { .. } => command.clone(),
     };
 
-    // Rewrite: preserve all tool_input fields, replace command
-    let mut updated_input = hook_input["tool_input"].clone();
+    // Rewrite: preserve all tool_input fields, replace command.
+    // In chained mode (prior hook output as stdin) tool_input is absent; fall back to
+    // hookSpecificOutput.updatedInput so extra fields like `restart` are preserved.
+    let base = if hook_input["tool_input"].is_object() {
+        hook_input["tool_input"].clone()
+    } else {
+        hook_input
+            .get("hookSpecificOutput")
+            .and_then(|h| h.get("updatedInput"))
+            .cloned()
+            .unwrap_or_else(|| json!({}))
+    };
+    let mut updated_input = base;
     if let Some(obj) = updated_input.as_object_mut() {
         obj.insert(
             "command".to_string(),
@@ -853,6 +874,91 @@ mod tests {
         assert!(
             !cmd.contains("psql-json"),
             "must not rewrite to json_tool for nested invocation: {cmd}"
+        );
+    }
+
+    // ── chained hook input (prior hook's raw output as stdin) ─────────────────
+
+    fn make_chained_input(command: &str) -> String {
+        // Simulates Claude Code passing the previous hook's full JSON output as gate's stdin.
+        json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": { "command": command }
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn chained_hook_input_intercepted() {
+        let _guard = LOCK.lock().unwrap();
+        // Claude Code chains hooks: gate receives RTK's raw output, not the original tool_input.
+        // gate hook must extract the command from hookSpecificOutput.updatedInput.command.
+        let config = default_config();
+        let out = process(
+            &make_chained_input("rtk psql -c 'SELECT email FROM users'"),
+            &config,
+        );
+        assert!(out.is_some(), "chained hook input must be intercepted");
+        let v: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.starts_with("gate run -- rtk psql"), "got: {cmd}");
+    }
+
+    #[test]
+    fn chained_hook_input_passthrough_for_non_intercepted() {
+        let _guard = LOCK.lock().unwrap();
+        let config = default_config();
+        assert!(
+            process(&make_chained_input("ls -la"), &config).is_none(),
+            "non-intercepted command in chained input must passthrough"
+        );
+    }
+
+    #[test]
+    fn chained_hook_input_curl_pipe() {
+        let _guard = LOCK.lock().unwrap();
+        let config = make_pipe_config("curl", "jq -c .");
+        let out = process(
+            &make_chained_input("rtk curl http://localhost:8080/users"),
+            &config,
+        );
+        assert!(out.is_some(), "chained curl must be intercepted");
+        let v: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        let cmd = v["hookSpecificOutput"]["updatedInput"]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.starts_with("gate run -- sh -c"), "got: {cmd}");
+        assert!(cmd.contains("rtk curl"), "got: {cmd}");
+        assert!(cmd.contains("jq -c ."), "got: {cmd}");
+    }
+
+    #[test]
+    fn chained_hook_extra_fields_preserved() {
+        let _guard = LOCK.lock().unwrap();
+        // Fields other than command in updatedInput (e.g. restart) must be preserved.
+        let config = default_config();
+        let input = json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": {
+                    "command": "tkpsql --sql 'SELECT email FROM users'",
+                    "restart": false
+                }
+            }
+        })
+        .to_string();
+        let out = process(&input, &config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v["hookSpecificOutput"]["updatedInput"]["restart"],
+            json!(false),
+            "restart field must survive chained rewrite"
         );
     }
 }
