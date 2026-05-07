@@ -305,8 +305,15 @@ pub fn classify_column(column_name: &str) -> Option<&'static str> {
             return Some(pii_type);
         }
     }
-    // Single-token pass
-    for token in &tokens {
+    // Single-token pass — skip tokens immediately followed by "at" when "at" is the
+    // final token (timestamp suffix, e.g. last_login_at → skip "login").
+    // Does NOT skip when "at" is in the middle (e.g. sex_at_birth → "sex" still matches).
+    for (i, token) in tokens.iter().enumerate() {
+        let next_is_trailing_at =
+            tokens.get(i + 1).map(String::as_str) == Some("at") && i + 2 == tokens.len();
+        if next_is_trailing_at {
+            continue;
+        }
         if let Some(&(_, pii_type)) = TOKEN_SYNONYMS.iter().find(|(t, _)| *t == token.as_str()) {
             return Some(pii_type);
         }
@@ -770,6 +777,17 @@ mod tests {
         assert_eq!(classify_column("status"), None);
         assert_eq!(classify_column("amount"), None);
         assert_eq!(classify_column("description"), None);
+    }
+
+    #[test]
+    fn timestamp_at_suffix_suppresses_single_token_match() {
+        // _at columns are timestamps, not PII credentials
+        assert_eq!(classify_column("last_login_at"), None);
+        assert_eq!(classify_column("login_at"), None);
+        // bare "login" and compound forms without _at still match
+        assert_eq!(classify_column("login"), Some("login"));
+        assert_eq!(classify_column("user_login"), Some("login"));
+        assert_eq!(classify_column("login_id"), Some("login"));
     }
 
     // ── New coverage ──────────────────────────────────────────────────────────
