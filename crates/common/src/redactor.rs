@@ -103,8 +103,10 @@ pub fn redact(payload: Value, plan: &RedactPlan, config: &PiiConfig) -> Value {
 
 fn detect_shape(val: &Value) -> Shape {
     match val {
-        Value::Object(map) if map.contains_key("error") => Shape::Error,
-        Value::Object(_) => Shape::Object,
+        Value::Object(map) => match map.get("error") {
+            Some(Value::String(s)) if !s.is_empty() => Shape::Error,
+            _ => Shape::Object,
+        },
         Value::Array(_) => Shape::Array,
         _ => Shape::Other,
     }
@@ -468,6 +470,28 @@ mod tests {
         let input = json!({"error": "user alice@example.com not found"});
         let out = redact(input.clone(), &plan(), &cfg());
         assert_eq!(out, input);
+    }
+
+    #[test]
+    fn null_error_key_is_not_error_shape() {
+        // {"error": null, "rows": [...]} is a common success envelope — must not bypass Gate 2.
+        let input = json!({"error": null, "rows": [{"email": "alice@example.com"}]});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["rows"][0]["email"], "[PII:email]");
+    }
+
+    #[test]
+    fn false_error_key_is_not_error_shape() {
+        let input = json!({"error": false, "email": "alice@example.com"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["email"], "[PII:email]");
+    }
+
+    #[test]
+    fn empty_string_error_key_is_not_error_shape() {
+        let input = json!({"error": "", "email": "alice@example.com"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["email"], "[PII:email]");
     }
 
     // ── 5. JSONB column (nested JSON string) ──────────────────────────────────
