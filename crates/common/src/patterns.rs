@@ -195,7 +195,6 @@ const TOKEN_SYNONYMS: &[(&str, &str)] = &[
     ("vaccine", "medical"),
     // ── Online & Technical Identifiers ────────────────────────────────────────
     ("username", "username"),
-    ("login", "login"),
     ("authtoken", "auth_token"),   // auth_token
     ("macaddress", "mac_address"), // mac_address (bigram; bare "mac" is not flagged)
     // ── Biometric ─────────────────────────────────────────────────────────────
@@ -781,13 +780,9 @@ mod tests {
 
     #[test]
     fn timestamp_at_suffix_suppresses_single_token_match() {
-        // _at columns are timestamps, not PII credentials
+        // _at columns are timestamps — confirm they don't match anything
         assert_eq!(classify_column("last_login_at"), None);
         assert_eq!(classify_column("login_at"), None);
-        // bare "login" and compound forms without _at still match
-        assert_eq!(classify_column("login"), Some("login"));
-        assert_eq!(classify_column("user_login"), Some("login"));
-        assert_eq!(classify_column("login_id"), Some("login"));
     }
 
     // ── New coverage ──────────────────────────────────────────────────────────
@@ -900,7 +895,7 @@ mod tests {
     fn classify_online_identifiers() {
         assert_eq!(classify_column("username"), Some("username"));
         assert_eq!(classify_column("user_name"), Some("username"));
-        assert_eq!(classify_column("login"), Some("login"));
+        assert_eq!(classify_column("login"), None);
         assert_eq!(classify_column("user_id"), Some("id"));
         assert_eq!(classify_column("device_id"), Some("id"));
         assert_eq!(classify_column("session_id"), Some("id"));
