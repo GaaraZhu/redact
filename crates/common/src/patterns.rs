@@ -17,6 +17,7 @@ pub const COLUMN_DENYLIST: &[&str] = &[
     "last_name",
     "surname",
     "birthdate",
+    "salutation",
 ];
 
 pub struct BuiltinPattern {
@@ -70,6 +71,7 @@ const TOKEN_SYNONYMS: &[(&str, &str)] = &[
     ("npi", "npi"),
     ("license", "license"),
     ("ip", "ip"),
+    ("salutation", "salutation"),
     ("surname", "name"),
     // Bigram entries: matched via consecutive token pairs joined without separator.
     // "product_name" → ["product","name"] → bigram "productname" → no match (safe).
@@ -284,6 +286,7 @@ mod tests {
             "last_name",
             "surname",
             "birthdate",
+            "salutation",
         ];
         for entry in &required {
             assert!(
@@ -539,6 +542,16 @@ mod tests {
         assert_eq!(classify_column("account_name"), None);
         assert_eq!(classify_column("vendor_name"), None);
         assert_eq!(classify_column("name"), None);
+    }
+
+    #[test]
+    fn classify_salutation_variants() {
+        assert_eq!(classify_column("salutation"), Some("salutation"));
+        assert_eq!(classify_column("personal_salutation"), Some("salutation"));
+        assert_eq!(classify_column("individual_salutation"), Some("salutation"));
+        assert_eq!(classify_column("salutation_value"), Some("salutation"));
+        assert_eq!(classify_column("SALUTATION"), Some("salutation"));
+        assert_eq!(classify_column("salutationCode"), Some("salutation"));
     }
 
     #[test]
