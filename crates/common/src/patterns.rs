@@ -232,7 +232,7 @@ fn tokenize_column(name: &str) -> Vec<String> {
 }
 
 /// Person-entity prefixes: `<prefix>_name` / `<prefix>_names` → "name".
-/// Deliberately excludes generic prefixes like "account", "vendor", "company"
+/// Deliberately excludes generic prefixes like "vendor", "company"
 /// that more often refer to non-person entities.
 const NAME_PREFIXES: &[&str] = &[
     "contact",
@@ -245,6 +245,7 @@ const NAME_PREFIXES: &[&str] = &[
     "owner",
     "recipient",
     "sender",
+    "account", // account_name = account holder's name (banking/payments context)
     // Additional person-name qualifiers
     "preferred", // preferred_name
     "middle",    // middle_name
@@ -740,9 +741,15 @@ mod tests {
         assert_eq!(classify_column("product_name"), None);
         assert_eq!(classify_column("company_name"), None);
         assert_eq!(classify_column("category_name"), None);
-        assert_eq!(classify_column("account_name"), None);
         assert_eq!(classify_column("vendor_name"), None);
         assert_eq!(classify_column("name"), None);
+    }
+
+    #[test]
+    fn account_name_is_name() {
+        // account_name = account holder's name (banking/payments); must be treated as PII.
+        assert_eq!(classify_column("account_name"), Some("name"));
+        assert_eq!(classify_column("account_names"), Some("name"));
     }
 
     #[test]

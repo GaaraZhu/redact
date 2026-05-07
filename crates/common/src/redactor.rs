@@ -346,10 +346,8 @@ fn scan_string(
         if let Some(type_label) = plan.forced_columns.get(k.as_str()) {
             if vb {
                 eprintln!(
-                    "[gate] field {:?} = {:?} → REDACTED (step: forced_column, type: {})",
-                    kname,
-                    truncate_val(&s),
-                    type_label
+                    "[gate] field {:?} → REDACTED (step: forced_column, type: {})",
+                    kname, type_label
                 );
             }
             return do_redact(type_label, &s, config, summary);
@@ -362,10 +360,8 @@ fn scan_string(
         if let Some(pii_type) = classify_column(k) {
             if vb {
                 eprintln!(
-                    "[gate] field {:?} = {:?} → REDACTED (step: column_classify, type: {})",
-                    kname,
-                    truncate_val(&s),
-                    pii_type
+                    "[gate] field {:?} → REDACTED (step: column_classify, type: {})",
+                    kname, pii_type
                 );
             }
             return do_redact(pii_type, &s, config, summary);
@@ -378,10 +374,8 @@ fn scan_string(
         if effective_names.iter().any(|n| n == k) {
             if vb {
                 eprintln!(
-                    "[gate] field {:?} = {:?} → REDACTED (step: column_name_exact, type: {})",
-                    kname,
-                    truncate_val(&s),
-                    k
+                    "[gate] field {:?} → REDACTED (step: column_name_exact, type: {})",
+                    kname, k
                 );
             }
             return do_redact(k.as_str(), &s, config, summary);
@@ -411,9 +405,8 @@ fn scan_string(
     if Luhn::check(&s) {
         if vb {
             eprintln!(
-                "[gate] field {:?} = {:?} → REDACTED (step: luhn, type: credit_card)",
-                kname,
-                truncate_val(&s)
+                "[gate] field {:?} → REDACTED (step: luhn, type: credit_card)",
+                kname
             );
         }
         return do_redact("credit_card", &s, config, summary);
@@ -434,21 +427,16 @@ fn scan_string(
         if score >= config.confidence_threshold {
             if vb {
                 eprintln!(
-                    "[gate] field {:?} = {:?} → REDACTED (step: regex, pattern: {}, score: {:.2})",
-                    kname,
-                    truncate_val(&s),
-                    name,
-                    score
+                    "[gate] field {:?} → REDACTED (step: regex, pattern: {}, score: {:.2})",
+                    kname, name, score
                 );
             }
             return do_redact(name, &s, config, summary);
         }
-        // Low-confidence: warn but do not redact. Raw value is intentionally excluded.
         if vb {
             eprintln!(
-                "[gate] field {:?} = {:?} → warned (step: regex, pattern: {}, score: {:.2} < threshold: {:.2})",
+                "[gate] field {:?} → warned (step: regex, pattern: {}, score: {:.2} < threshold: {:.2})",
                 kname,
-                truncate_val(&s),
                 name,
                 score,
                 config.confidence_threshold
@@ -461,27 +449,13 @@ fn scan_string(
             score,
         ));
     } else if vb {
-        eprintln!(
-            "[gate] field {:?} = {:?} → passed (no match)",
-            kname,
-            truncate_val(&s)
-        );
+        eprintln!("[gate] field {:?} → passed (no match)", kname);
     }
 
     Value::String(s)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn truncate_val(s: &str) -> String {
-    const MAX: usize = 60;
-    if s.chars().count() > MAX {
-        let truncated: String = s.chars().take(MAX).collect();
-        format!("{truncated}...")
-    } else {
-        s.to_string()
-    }
-}
 
 fn do_redact(
     pii_type: &str,
