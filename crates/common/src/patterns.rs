@@ -64,6 +64,21 @@ const TOKEN_SYNONYMS: &[(&str, &str)] = &[
     ("birth", "dob"),
     ("birthday", "dob"),
     ("birthdate", "dob"),
+    // Bigram/trigram entries for DOB — matched before bare "birth" via pass ordering.
+    ("dateofbirth", "dob"), // trigram: date_of_birth
+    ("birthdate", "dob"),   // bigram:  birth_date (already a token too, kept for clarity)
+    // LOB (location of birth) — bigrams and trigrams checked before bare "birth" → dob.
+    ("birthcountry", "lob"),    // birth_country
+    ("birthplace", "lob"),      // birth_place
+    ("birthcity", "lob"),       // birth_city
+    ("birthstate", "lob"),      // birth_state
+    ("birthlocation", "lob"),   // birth_location
+    ("birthtown", "lob"),       // birth_town
+    ("countryofbirth", "lob"),  // country_of_birth  (trigram)
+    ("placeofbirth", "lob"),    // place_of_birth     (trigram)
+    ("cityofbirth", "lob"),     // city_of_birth      (trigram)
+    ("stateofbirth", "lob"),    // state_of_birth     (trigram)
+    ("locationofbirth", "lob"), // location_of_birth  (trigram)
     ("card", "credit_card"),
     ("cvv", "cvv"),
     ("cvc", "cvv"),
@@ -131,16 +146,25 @@ const NAME_PREFIXES: &[&str] = &[
 /// Avoids over-broad "name" matching: "product_name" → `None`; "first_name" → `Some("name")`.
 pub fn classify_column(column_name: &str) -> Option<&'static str> {
     let tokens = tokenize_column(column_name);
-    // Single-token pass
-    for token in &tokens {
-        if let Some(&(_, pii_type)) = TOKEN_SYNONYMS.iter().find(|(t, _)| *t == token.as_str()) {
+    // Longer matches run first so they take priority over shorter ones.
+    // e.g. "country_of_birth" → trigram "countryofbirth" → lob  (wins over bare "birth" → dob)
+    // Trigram pass
+    for triple in tokens.windows(3) {
+        let trigram = format!("{}{}{}", triple[0], triple[1], triple[2]);
+        if let Some(&(_, pii_type)) = TOKEN_SYNONYMS.iter().find(|(t, _)| *t == trigram.as_str()) {
             return Some(pii_type);
         }
     }
-    // Bigram pass: join each consecutive pair and check
+    // Bigram pass
     for pair in tokens.windows(2) {
         let bigram = format!("{}{}", pair[0], pair[1]);
         if let Some(&(_, pii_type)) = TOKEN_SYNONYMS.iter().find(|(t, _)| *t == bigram.as_str()) {
+            return Some(pii_type);
+        }
+    }
+    // Single-token pass
+    for token in &tokens {
+        if let Some(&(_, pii_type)) = TOKEN_SYNONYMS.iter().find(|(t, _)| *t == token.as_str()) {
             return Some(pii_type);
         }
     }
@@ -201,7 +225,14 @@ pub struct Luhn;
 
 impl Luhn {
     /// Returns true if the string passes the Luhn check and has 13–19 digits.
+    /// Only digits, spaces, and dashes are accepted; any other character (e.g.
+    /// hex letters in a UUID) causes an immediate false return.
     pub fn check(s: &str) -> bool {
+        if s.chars()
+            .any(|c| !c.is_ascii_digit() && c != ' ' && c != '-')
+        {
+            return false;
+        }
         let digits: Vec<u32> = s
             .chars()
             .filter(|c| c.is_ascii_digit())
@@ -443,11 +474,11 @@ mod tests {
     }
 
     #[test]
-    fn luhn_non_digit_chars_ignored() {
-        // Only digits count; letters are stripped.
-        // "4111111111111111" valid, so same with non-digit noise that doesn't change digit count.
-        // Padding with letters shouldn't cause a 20-digit rejection since letters are filtered.
-        assert!(Luhn::check("4111111111111111abc")); // still 16 digits after filtering
+    fn luhn_rejects_non_digit_non_separator_chars() {
+        // Any character other than digit, space, or dash disqualifies the string.
+        assert!(!Luhn::check("4111111111111111abc"));
+        // UUIDs contain hex letters — must not be treated as credit cards.
+        assert!(!Luhn::check("19eb1ea0-1d75-4a8e-86bd-0b017af3b3f0"));
     }
 
     // --- classify_column ---
@@ -531,6 +562,26 @@ mod tests {
         assert_eq!(classify_column("employee_name"), Some("name"));
         assert_eq!(classify_column("patient_name"), Some("name"));
         assert_eq!(classify_column("recipient_name"), Some("name"));
+    }
+
+    #[test]
+    fn classify_birth_columns() {
+        // Date-of-birth columns → dob
+        assert_eq!(classify_column("dob"), Some("dob"));
+        assert_eq!(classify_column("birth"), Some("dob"));
+        assert_eq!(classify_column("birthday"), Some("dob"));
+        assert_eq!(classify_column("birthdate"), Some("dob"));
+        assert_eq!(classify_column("birth_date"), Some("dob"));
+        assert_eq!(classify_column("date_of_birth"), Some("dob"));
+        assert_eq!(classify_column("dateOfBirth"), Some("dob"));
+        // Location-of-birth columns → lob (more specific match wins over bare "birth" → dob)
+        assert_eq!(classify_column("country_of_birth"), Some("lob"));
+        assert_eq!(classify_column("place_of_birth"), Some("lob"));
+        assert_eq!(classify_column("city_of_birth"), Some("lob"));
+        assert_eq!(classify_column("state_of_birth"), Some("lob"));
+        assert_eq!(classify_column("birth_country"), Some("lob"));
+        assert_eq!(classify_column("birth_place"), Some("lob"));
+        assert_eq!(classify_column("birth_city"), Some("lob"));
     }
 
     #[test]
