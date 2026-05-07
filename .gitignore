@@ -15,3 +15,8 @@
 # Env
 .env
 .env.local
+
+# Python
+dev/.venv/
+__pycache__/
+*.pyc

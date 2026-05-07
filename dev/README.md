@@ -77,6 +77,57 @@ The hook fires transparently. Claude sees:
 
 All data is synthetic. SSNs use the `000-xx-xxxx` prefix (never issued). Credit cards are well-known Luhn-valid test vectors.
 
+## MCP server
+
+`mcp_server.py` exposes the same `gate_demo` database via the Model Context Protocol, so you can test the AI→MCP→Database flow (as opposed to AI→bash→Database).
+
+### Setup
+
+```sh
+python3 -m venv dev/.venv
+dev/.venv/bin/pip install -r dev/requirements.txt
+```
+
+(The `dev/.venv` directory is already in `.gitignore`.)
+
+### Register with Claude Code
+
+Add to your `~/.claude/settings.json` under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "postgres-gate": {
+      "command": "/absolute/path/to/gate/dev/.venv/bin/python",
+      "args": ["/absolute/path/to/gate/dev/mcp_server.py"]
+    }
+  }
+}
+```
+
+Restart Claude Code. The server exposes three tools:
+
+| Tool | Description |
+|------|-------------|
+| `list_tables` | Names of all tables in the public schema |
+| `describe_table(table)` | Column names, types, and nullability |
+| `execute_query(sql)` | Run a SELECT; returns rows as JSON |
+
+### Demo (unprotected — PII fully visible to the AI)
+
+Ask Claude:
+
+> Use the `postgres-gate` MCP tool to run `SELECT id, full_name, email, status FROM users`
+
+The AI sees raw PII — `full_name` and `email` are unredacted. This is the flow gate's MCP proxy mode (planned) would protect.
+
+### Override connection settings
+
+```sh
+PG_HOST=localhost PG_PORT=5432 PG_DB=gate_demo PG_USER=gate PG_PASS=gate \
+  dev/.venv/bin/python dev/mcp_server.py
+```
+
 ## Tear down
 
 ```sh
