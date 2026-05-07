@@ -15,7 +15,11 @@
 
 ---
 
-AI coding agents that access internal data sources can inadvertently exfiltrate PII — whether querying a database or calling an internal API. A single `SELECT *` or `curl` against an internal service can expose emails, SSNs, and payment data directly into the model's context window — and from there into logs, prompts, and training pipelines. `gate` stops this without requiring any changes to the AI's prompts or tools.
+AI agents increasingly access internal databases and APIs through CLI tools, scripts, and MCP servers. Without safeguards, sensitive data such as emails, phone numbers, tax identifiers, and payment details can be unintentionally exposed to LLM context windows.
+
+`gate` intercepts query results before they reach the model and automatically redacts detected PII fields without requiring changes to existing agent workflows or prompts.
+
+> **Note:** Currently, `gate` supports Bash-based tooling. MCP server interception support is planned.
 
 ## Demo
 
@@ -63,7 +67,7 @@ Run `gate validate` to confirm your config is valid before the first session.
 
 ## How it works
 
-`gate` integrates with your agent harness as a transparent rewrite hook. Every Bash command the AI tries to run passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
+`gate` currently covers the **Bash tooling** path: every Bash command the AI tries to run passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
 
 The rewrite is **enforcing** in both supported harnesses — the AI cannot bypass it:
 
@@ -353,6 +357,8 @@ Raise `confidence_threshold` (e.g. to `0.9`) to reduce over-redaction, or narrow
 Gate 1 can't infer column types from a wildcard query, so every value is passed to Gate 2's regex scanner. Use an explicit column list (`SELECT id, status, created_at FROM users`) to skip the warning and avoid scanning non-PII columns.
 
 ## Roadmap
+
+**MCP server interception** — gate currently covers the Bash tooling path (CLI commands the AI runs via the shell). The other common access pattern is MCP: the AI calls a Model Context Protocol server directly, bypassing the shell entirely. MCP support will bring the same two-gate redaction pipeline to MCP tool responses, with no changes required to the MCP server itself.
 
 **GitHub Copilot CLI** — deferred to a future release. Copilot CLI's `preToolUse` hook only supports deny-with-suggestion (no transparent rewrite), which makes the integration *advisory* — strictly safer than no hook, but the AI could in principle ignore the suggested rewrite. We're holding the integration until either Copilot CLI gains an `updatedInput` equivalent or the user demand justifies shipping the advisory-only mode.
 
