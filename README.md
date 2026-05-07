@@ -130,6 +130,45 @@ AI asks to run: tkpsql query --sql "SELECT * FROM users"
 }
 ```
 
+## Built-in PII detection
+
+`gate` ships with two layers of built-in detection that require no configuration.
+
+**Gate 1 — column-name inference from SQL.** When a `sql_arg` is configured, gate parses the SELECT list and marks any column whose name matches a PII pattern as a forced-redact target — even if the raw value would not trigger a regex.
+
+**Gate 2 — value scanning and column-name heuristics.** Every string field in the JSON output is evaluated against regex patterns and a column-name classifier. The classifier tokenises column names (handling `snake_case`, `camelCase`, `PascalCase`, and `UPPER_CASE`) so `userEmail`, `user_email`, and `USER_EMAIL` all resolve to the same detection rule.
+
+### Column-name categories
+
+| Category | Detected columns (representative examples) |
+|---|---|
+| **Names** | `first_name`, `last_name`, `full_name`, `given_name`, `family_name`, `surname`, `preferred_name`, `middle_name`, `maiden_name`, `salutation`; `<entity>_name` where entity is one of: contact, customer, client, employee, patient, member, owner, recipient, sender, spouse, parent, guardian, manager, sibling, children |
+| **Demographics** | `gender`, `sex`, `nationality`, `citizenship` |
+| **Government IDs** | `passport`, `license` / `driver_license_number`, `ssn` / `social_security_number`, `national_id`, `tax_number` / `tax_id` / `ird_number`, `visa_number`, `resident_id`, `immigration_id` |
+| **Contact** | `email` / `email_address` / `mail`, `phone` / `phone_number` / `mobile`, `fax` |
+| **Date of birth** | `dob`, `birth`, `birthday`, `date_of_birth`, `birth_date`, `dateOfBirth` |
+| **Location of birth** | `birth_country`, `birth_place`, `birth_city`, `country_of_birth`, `place_of_birth`, `city_of_birth`, `state_of_birth` |
+| **Address & location** | `address` / `addr`, `street`, `city`, `state`, `province`, `country`, `postcode`, `zip`, `suburb`, `latitude`, `longitude`, `gps`, `coordinates` |
+| **Financial** | `bank_account`, `account_number`, `iban`, `swift`, `routing_number`, `bsb`, `credit_card` / `card_number`, `cvv` / `cvc`, `expiry` |
+| **Employment** | `salary`, `wage`, `job_title`, `employee_id`, `staff_id`, `student_id`, `manager_id`, and any `<entity>_id` / `<entity>_number` where entity is: employee, staff, student, member, client, customer, consumer, cust, crm, person, manager, user, device, session, cookie, advertising, external |
+| **Health & medical** | `medical`, `health`, `diagnosis`, `prescription`, `disability`, `vaccination`, `vaccine`, `npi` |
+| **Online & technical** | `username` / `user_name`, `login`, `ip_address`, `mac_address`, `auth_token`, `user_id`, `device_id`, `session_id`, `cookie_id`, `advertising_id` |
+| **Biometric** | `biometric`, `fingerprint`, `voiceprint`, `retina`, `face_scan` |
+| **Family & relationships** | `next_of_kin`, `emergency_contact`, `spouse_name`, `parent_name`, `guardian_name`, `children_names` |
+
+### Value-based patterns
+
+| Pattern | Detection | Example values caught |
+|---|---|---|
+| Email address | Regex (confidence 0.95) | `alice@example.com`, `user+tag@company.co.uk` |
+| Social Security Number | Regex (confidence 0.90) | `123-45-6789` |
+| Phone number | Regex (confidence 0.70) | `+1 555-123-4567`, `(555) 123-4567`, `555.123.4567` |
+| Credit / debit card | Regex + [Luhn algorithm](https://en.wikipedia.org/wiki/Luhn_algorithm) (confidence 1.0) | `4111 1111 1111 1111`, `5500-0055-5555-5559` |
+
+When a column name also matches the denylist, Gate 2 adds a 0.15 confidence boost to any value hit in that column, pushing borderline matches over the redaction threshold.
+
+Add your own columns or patterns in config — see [Configuration](#configuration) below.
+
 ## Supported commands
 
 Any command that returns JSON can be configured as a `gate` target — database clients, internal API calls via `curl`, or any other tool your AI agent uses to fetch data. The AI sees the same structured response it always did, with PII values replaced in-place.
@@ -154,12 +193,14 @@ Config lives at `~/.config/gate/config.yaml` (override with `GATE_CONFIG`).
 # Set to false to disable all PII redaction (or use GATE_DISABLED=1 for a session).
 enabled: true
 
+# Tools whose Bash invocations are intercepted and piped through `gate run`.
+# Only tools listed here are intercepted; everything else passes through unchanged.
 tools:
   tkpsql:
+    sql_arg: "--sql"   # Gate 1 parses this SQL to extract column names for targeted redaction
+  tkdbr:
     sql_arg: "--sql"
   tkmsql:
-    sql_arg: "--sql"
-  tkdbr:
     sql_arg: "--sql"
   psql:
     sql_arg: "-c"
@@ -171,46 +212,19 @@ tools:
     pipe: "jq -c ."   # wraps curl output through jq so Gate 2 always receives JSON
 
 pii:
-  # Column names that indicate PII regardless of value content (case-insensitive, substring match).
-  # These extend the built-in denylist; they don't replace it.
-  column_names:
-    - email
-    - ssn
-    - dob
-    - phone
-    - npi
-    - credit_card
-    - card_number
-    - cvv
-    - passport
-    - license_number
-    - full_name
-    - first_name
-    - last_name
-    - birthdate
+  action: redact          # redact | warn | reject
+  wildcard_policy: warn   # warn | reject — applies when the AI uses SELECT *
 
-  action: redact          # warn | redact | reject
-  wildcard_policy: warn   # warn | reject — applies when the AI uses SELECT * (no explicit column list)
+  # Add column names beyond the built-in denylist (see Built-in PII detection above).
+  # column_names:
+  #   - secret_token
+  #   - api_key
 
-  # Built-in patterns (shown here for reference; override by redefining the key).
-  # credit_card is handled by the Luhn algorithm (https://en.wikipedia.org/wiki/Luhn_algorithm) and is always confidence 1.0.
-  patterns:
-    email:
-      regex: '[\w.+\-]+@[\w\-]+\.[a-z]{2,}'
-      confidence: 0.95
-    ssn:
-      regex: '\b\d{3}-\d{2}-\d{4}\b'
-      confidence: 0.90
-    phone:
-      regex: '\b(\+1[\s.]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b'
-      confidence: 0.70
-    ip_address:
-      regex: '\b(?:\d{1,3}\.){3}\d{1,3}\b'
-      confidence: 0.60
-    # Custom pattern example:
-    # employee_id:
-    #   regex: '\bEMP-\d{6}\b'
-    #   confidence: 0.85
+  # Override or add PII regex patterns.
+  # patterns:
+  #   internal_id:
+  #     regex: '\bEMP-\d{6}\b'
+  #     confidence: 0.85
 
   # Added to a pattern's base confidence when the JSON key also matches the column denylist.
   # Final score is capped at 1.0.

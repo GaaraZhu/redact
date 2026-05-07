@@ -1096,8 +1096,8 @@ mod tests {
             ]
         });
         let out = redact(input, &plan(), &cfg());
-        // client_id: uuid — no PII classification, must pass through
-        assert_eq!(out["rows"][0][0], "37a7c4c8-d55b-4a4a-a47f-778ceabbfbaa");
+        // client_id → id (now classified as a person identifier)
+        assert_eq!(out["rows"][0][0], "[PII:id]");
         // first_names → name
         assert_eq!(out["rows"][0][1], "[PII:name]");
         // last_name → name
@@ -1105,12 +1105,13 @@ mod tests {
         // date_of_birth → dob
         assert_eq!(out["rows"][0][3], "[PII:dob]");
         // second row
+        assert_eq!(out["rows"][1][0], "[PII:id]");
         assert_eq!(out["rows"][1][1], "[PII:name]");
         assert_eq!(out["rows"][1][2], "[PII:name]");
         // null stays null
         assert!(out["rows"][1][3].is_null());
-        // summary
-        assert_eq!(out["_gate_summary"]["redacted"], 5);
+        // summary: 4 in row 0 + 3 non-null in row 1 = 7
+        assert_eq!(out["_gate_summary"]["redacted"], 7);
     }
 
     #[test]
