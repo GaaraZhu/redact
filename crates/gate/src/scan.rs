@@ -68,28 +68,25 @@ pub fn run() {
     std::process::exit(if has_pii { 1 } else { 0 });
 }
 
-/// Parse columnar JSON output to extract (table_name, column_name) pairs.
+/// Parse columnar input to extract (table_name, column_name) pairs.
 ///
-/// Supports two formats:
+/// Supports three formats:
 /// 1. Array-of-arrays (tkdbr / tkmsql): `{"columns": [...], "rows": [[...], ...]}`
 ///    Locates TABLE_NAME and COLUMN_NAME headers (case-insensitive) in the `columns` array,
 ///    then reads the corresponding positions from each row.
-/// 2. Array-of-objects (psql): `{"rows": [{"column_name": "...", "table_name": "..."}, ...]}`
+/// 2. Array-of-objects (psql JSON): `{"rows": [{"column_name": "...", "table_name": "..."}, ...]}`
 ///    Extracts column_name and table_name directly from each object.
-fn parse_columnar_json(json_str: &str) -> Result<Vec<(String, String)>, String> {
-    let value: serde_json::Value = match serde_json::from_str(json_str.trim()) {
-        Ok(v) => v,
-        Err(_) => {
-            return Err(
-                "input is not valid JSON — pipe the output of a schema query into gate scan."
-                    .to_string(),
-            )
-        }
-    };
-
-    // Extract rows
-    let rows =
-        match value.get("rows") {
+/// 3. psql aligned text table (default `psql -c` output):
+///    ```
+///     table_name |  column_name
+///    ------------+---------------
+///     users      | id
+///    (6 rows)
+///    ```
+fn parse_columnar_json(input: &str) -> Result<Vec<(String, String)>, String> {
+    // Try JSON first (tkdbr array-of-arrays or psql array-of-objects format)
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(input.trim()) {
+        let rows = match value.get("rows") {
             Some(serde_json::Value::Array(r)) => r,
             _ => return Err(
                 "unexpected input shape — expected a `rows` array (e.g. from tkdbr or psql query)."
@@ -97,19 +94,93 @@ fn parse_columnar_json(json_str: &str) -> Result<Vec<(String, String)>, String> 
             ),
         };
 
-    if rows.is_empty() {
-        return Ok(Vec::new());
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        return match &rows[0] {
+            serde_json::Value::Array(_) => parse_array_of_arrays(&value, rows),
+            serde_json::Value::Object(_) => parse_array_of_objects(rows),
+            _ => Err(
+                "unexpected row format — expected array of arrays (tkdbr) or array of objects (psql)."
+                    .to_string(),
+            ),
+        };
     }
 
-    // Detect format: check if first row is an array (tkdbr format) or object (psql format)
-    match &rows[0] {
-        serde_json::Value::Array(_) => parse_array_of_arrays(&value, rows),
-        serde_json::Value::Object(_) => parse_array_of_objects(rows),
-        _ => Err(
-            "unexpected row format — expected array of arrays (tkdbr) or array of objects (psql)."
-                .to_string(),
-        ),
+    // Fall back to psql aligned text table format
+    if input.contains('|') {
+        return parse_psql_text_table(input);
     }
+
+    Err(
+        "input is not valid JSON or psql table format — pipe the output of a schema query into gate scan."
+            .to_string(),
+    )
+}
+
+/// Parse psql aligned text table output:
+/// ```text
+///  table_name |  column_name
+/// ------------+---------------
+///  users      | id
+/// (6 rows)
+/// ```
+fn parse_psql_text_table(text: &str) -> Result<Vec<(String, String)>, String> {
+    let mut lines = text.lines();
+
+    // Find the header line (first line containing '|')
+    let header_line = loop {
+        match lines.next() {
+            Some(line) if line.contains('|') => break line,
+            Some(_) => continue,
+            None => {
+                return Err(
+                    "no header line found in psql table output — expected table_name | column_name header."
+                        .to_string(),
+                )
+            }
+        }
+    };
+
+    // Parse header column names
+    let headers: Vec<String> = header_line
+        .split('|')
+        .map(|h| h.trim().to_lowercase())
+        .collect();
+
+    let table_idx = headers.iter().position(|h| h == "table_name").ok_or_else(|| {
+        "table_name column not found in psql output — query must include table_name and column_name."
+            .to_string()
+    })?;
+    let column_idx = headers.iter().position(|h| h == "column_name").ok_or_else(|| {
+        "column_name column not found in psql output — query must include table_name and column_name."
+            .to_string()
+    })?;
+
+    // Skip the separator line (---+---)
+    lines.next();
+
+    // Parse data rows
+    let mut pairs = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        // Stop at empty lines or the "(N rows)" footer
+        if trimmed.is_empty() || (trimmed.starts_with('(') && trimmed.ends_with(')')) {
+            break;
+        }
+        if !line.contains('|') {
+            continue;
+        }
+        let cells: Vec<&str> = line.split('|').map(|c| c.trim()).collect();
+        let table = cells.get(table_idx).copied().unwrap_or("").to_string();
+        let col = cells.get(column_idx).copied().unwrap_or("").to_string();
+        if !table.is_empty() && !col.is_empty() {
+            pairs.push((table, col));
+        }
+    }
+
+    Ok(pairs)
 }
 
 /// Parse array-of-arrays format: `{"columns": [...], "rows": [[...], ...]}`
@@ -670,5 +741,70 @@ mod tests {
     #[test]
     fn map_unknown_to_other() {
         assert_eq!(map_to_tier1_category("unknown_type"), "Other");
+    }
+
+    // ── psql text table format tests ──────────────────────────────────────────
+
+    #[test]
+    fn parse_psql_text_table_basic() {
+        let input = " table_name |  column_name\n------------+---------------\n users      | id\n users      | full_name\n users      | email\n users      | status\n users      | created_at\n users      | last_login_at\n(6 rows)\n";
+        let pairs = parse_columnar_json(input).unwrap();
+        assert_eq!(pairs.len(), 6);
+        assert_eq!(pairs[0], ("users".to_string(), "id".to_string()));
+        assert_eq!(pairs[1], ("users".to_string(), "full_name".to_string()));
+        assert_eq!(pairs[2], ("users".to_string(), "email".to_string()));
+    }
+
+    #[test]
+    fn parse_psql_text_table_exact_user_output() {
+        // Exact output from the user's psql session
+        let input = " table_name |  column_name\n------------+---------------\n users      | id\n users      | full_name\n users      | email\n users      | status\n users      | created_at\n users      | last_login_at\n(6 rows)\n";
+        let pairs = parse_columnar_json(input).unwrap();
+        assert_eq!(pairs.len(), 6);
+        assert_eq!(pairs[5], ("users".to_string(), "last_login_at".to_string()));
+    }
+
+    #[test]
+    fn parse_psql_text_table_zero_rows() {
+        let input = " table_name |  column_name\n------------+---------------\n(0 rows)\n";
+        let pairs = parse_columnar_json(input).unwrap();
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn parse_psql_text_table_one_row() {
+        let input = " table_name | column_name\n------------+-------------\n orders     | customer_id\n(1 row)\n";
+        let pairs = parse_columnar_json(input).unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0], ("orders".to_string(), "customer_id".to_string()));
+    }
+
+    #[test]
+    fn parse_psql_text_table_multiple_tables() {
+        let input = " table_name | column_name\n------------+-------------\n users      | email\n orders     | customer_id\n payments   | card_number\n(3 rows)\n";
+        let pairs = parse_columnar_json(input).unwrap();
+        assert_eq!(pairs.len(), 3);
+        assert_eq!(pairs[0], ("users".to_string(), "email".to_string()));
+        assert_eq!(pairs[1], ("orders".to_string(), "customer_id".to_string()));
+        assert_eq!(
+            pairs[2],
+            ("payments".to_string(), "card_number".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_psql_text_table_missing_table_name_errors() {
+        let input = " column_name\n-------------\n email\n(1 row)\n";
+        let result = parse_columnar_json(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_psql_text_table_columns_reversed() {
+        // column_name before table_name in header
+        let input = " column_name | table_name\n-------------+------------\n email       | users\n(1 row)\n";
+        let pairs = parse_columnar_json(input).unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0], ("users".to_string(), "email".to_string()));
     }
 }

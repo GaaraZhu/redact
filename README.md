@@ -29,6 +29,73 @@ The agent asked for all users in plain English; `gate` intercepted the query and
 
 Also works with OpenCode — see the [full list of supported harnesses](#how-it-works).
 
+## Scan your schema
+
+Before installing the hook, use `gate scan` to assess how much PII your database schema exposes. Pipe the output of a schema query — one that returns `TABLE_NAME` and `COLUMN_NAME` — and gate prints a risk report across every table.
+
+```bash
+# PostgreSQL (toolkit-managed)
+tkpsql query --sql "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position" | gate scan
+
+# PostgreSQL (direct)
+psql -U <user> -h <host> -d <dbname> -c "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position" | gate scan
+
+# Databricks (toolkit-managed)
+tkdbr query --conn dev --sql "SELECT TABLE_NAME, COLUMN_NAME FROM system.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '<schema>' ORDER BY TABLE_NAME, COLUMN_NAME" --limit 1000 | gate scan
+
+# MS SQL Server (toolkit-managed)
+tkmsql query --sql "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS ORDER BY TABLE_NAME, ORDINAL_POSITION" | gate scan
+```
+
+Example output:
+
+```
+Gate PII Scan
+───────────────────────────────────────────────────────────
+
+Summary
+  Tables scanned         12
+  Columns scanned        87
+
+  PII columns            34 (39.1%)
+  Non-PII columns        53 (60.9%)
+
+  Risk level         CRITICAL
+
+Detected Categories
+───────────────────────────────────────────────────────────
+  Names                   8  23.5%
+  Contact                 6  17.6%
+  Employment              5  14.7%
+  Government IDs          4  11.8%
+  Financial               3   8.8%
+
+Top Findings
+───────────────────────────────────────────────────────────
+Names
+  users.full_name
+  patients.first_name
+  patients.last_name
+  ... and 5 more
+
+Contact
+  users.email
+  customers.phone_number
+  orders.contact_email
+
+Government IDs
+  patients.ssn
+  employees.tax_id
+  employees.national_id
+
+Hint
+  Use --verbose to show all detected columns
+```
+
+Risk levels: **CRITICAL** (>25% of columns are PII), **HIGH** (>10%), **LOW** (≤10%). The command exits with code 1 if any PII columns are found, making it scriptable in CI audits.
+
+If you have not yet created a config, run `gate config --init-only` first to generate a starter config. No tools need to be configured to use `gate scan` — it only uses built-in column-name detection.
+
 ## Quickstart
 
 1. **Install gate**
@@ -261,6 +328,7 @@ pii:
 | `gate list` | Show configured tools and their SQL flags |
 | `gate validate` | Check config for errors and warnings |
 | `gate version` | Print version |
+| `gate scan` | Pipe schema query output (`SELECT TABLE_NAME, COLUMN_NAME ...`) into this to get a PII risk report across all tables. Exits 1 if any PII columns are found — scriptable in CI audits. |
 | `gate run [--verbose] -- <cmd>` | Run a command through the redaction pipeline. Normally invoked by the hook; run manually to test a command. `--verbose` prints each field's Gate 2 decision to stderr. |
 | `gate run [--verbose]` | Read JSON from stdin and apply Gate 2 redaction directly — useful for testing or piping output from arbitrary sources. |
 | `gate hook` | *(internal)* Hook entry point — invoked by the harness, not directly |
