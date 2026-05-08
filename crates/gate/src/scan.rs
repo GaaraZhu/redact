@@ -319,7 +319,9 @@ mod tests {
             .collect::<Vec<_>>();
         let stats = aggregate_by_category(&pairs, &cfg);
         // find whichever category "first_name" landed in
-        let name_entry = stats.values().find(|r| r.examples.len() > 0 && r.examples[0].contains("first_name"));
+        let name_entry = stats
+            .values()
+            .find(|r| r.examples.len() > 0 && r.examples[0].contains("first_name"));
         if let Some(entry) = name_entry {
             assert!(entry.examples.len() <= 3);
         }
