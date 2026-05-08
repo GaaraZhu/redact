@@ -247,10 +247,9 @@ fn map_to_tier1_category(tier2: &str) -> &'static str {
     }
 }
 
-/// Aggregation result per PII category with tier-1 and tier-2 structure.
+/// Aggregation result per PII category
 struct TieredCategoryResult {
     tier1: &'static str,
-    tier2: String,
     count: usize,
     examples: Vec<String>,
 }
@@ -277,7 +276,6 @@ fn aggregate_by_category(
         let key = (tier1.to_string(), tier2.clone());
         let entry = map.entry(key).or_insert(TieredCategoryResult {
             tier1,
-            tier2: tier2.clone(),
             count: 0,
             examples: Vec::new(),
         });
@@ -316,23 +314,76 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult]) {
         .collect::<std::collections::HashSet<_>>()
         .len();
 
-    println!("Gate PII Scan");
-    println!(
-        "Scanned {} columns across {} tables\n",
-        total_columns, unique_tables
-    );
+    println!("\x1b[1mGate PII Scan\x1b[0m");
+    println!("{}", "─".repeat(59));
+    println!();
 
-    println!(
-        "{:<24} {:<18} {:<10} {:<12} Examples",
-        "Tier 1 Category", "Tier 2 Category", "Columns", "% of total"
-    );
-    println!("{}", "─".repeat(90));
-
-    let mut total_pii: usize = 0;
+    // Summary section
+    println!("\x1b[1mSummary\x1b[0m");
 
     // Separate PII from "No PII"
     let (pii_results, no_pii_results): (Vec<_>, Vec<_>) =
         stats.iter().partition(|r| r.tier1 != "No PII");
+
+    let mut total_pii: usize = 0;
+    let mut total_no_pii: usize = 0;
+
+    for result in &pii_results {
+        total_pii += result.count;
+    }
+    for result in &no_pii_results {
+        total_no_pii += result.count;
+    }
+
+    let pii_percentage = if total_columns > 0 {
+        (total_pii as f64 / total_columns as f64) * 100.0
+    } else {
+        0.0
+    };
+    let no_pii_percentage = if total_columns > 0 {
+        (total_no_pii as f64 / total_columns as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    // Calculate risk level
+    let risk_level = if total_pii as f64 / total_columns as f64 > 0.25 {
+        "CRITICAL"
+    } else if total_pii as f64 / total_columns as f64 > 0.1 {
+        "HIGH"
+    } else {
+        "LOW"
+    };
+
+    println!("  {:<19} {:>4}", "Tables scanned", unique_tables);
+    println!("  {:<19} {:>4}", "Columns scanned", total_columns);
+    println!();
+    println!(
+        "  {:<19} {:>4} ({:.1}%)",
+        "PII columns", total_pii, pii_percentage
+    );
+    println!(
+        "  {:<19} {:>4} ({:.1}%)",
+        "Non-PII columns", total_no_pii, no_pii_percentage
+    );
+    println!();
+
+    // Add colored risk level
+    let risk_color = match risk_level {
+        "CRITICAL" | "HIGH" => "\x1b[31m", // Red
+        "LOW" => "\x1b[32m",               // Green
+        _ => "",
+    };
+    let reset = "\x1b[0m";
+    println!(
+        "  {:<18} {}{}{}",
+        "Risk level", risk_color, risk_level, reset
+    );
+    println!();
+
+    // Detected categories section
+    println!("\x1b[1mDetected Categories\x1b[0m");
+    println!("{}", "─".repeat(59));
 
     // Group PII results by tier1 category
     let mut tier1_groups: BTreeMap<&'static str, Vec<&TieredCategoryResult>> = BTreeMap::new();
@@ -340,57 +391,73 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult]) {
         tier1_groups.entry(result.tier1).or_default().push(result);
     }
 
-    // Print all tier1 categories in README order
+    // Collect tier1 categories with their totals, sorted by count descending
+    let mut tier1_totals: Vec<(&'static str, usize)> = Vec::new();
     for tier1_cat in TIER1_CATEGORIES_ORDERED {
-        match tier1_groups.get(tier1_cat) {
-            Some(group) => {
-                // Print tier2 entries for this tier1 category
-                for (idx, result) in group.iter().enumerate() {
-                    let percentage = (result.count as f64 / total_columns as f64) * 100.0;
-                    let examples_str = if result.examples.len() >= 3 {
-                        format!("{}, {} …", result.examples[0], result.examples[1])
-                    } else {
-                        result.examples.join(", ")
-                    };
-
-                    // Print tier1 only on first row of the group
-                    let tier1_display = if idx == 0 { *tier1_cat } else { "" };
-
-                    println!(
-                        "{:<24} {:<18} {:<10} {:>6.1}% {}",
-                        tier1_display, result.tier2, result.count, percentage, examples_str
-                    );
-                    total_pii += result.count;
-                }
-            }
-            None => {
-                // Print N/A if no tier2 entries for this tier1 category
-                println!("{:<24} {:<18} {:<10} {:>6.1}%", tier1_cat, "N/A", 0, 0.0);
+        if let Some(group) = tier1_groups.get(tier1_cat) {
+            let count: usize = group.iter().map(|r| r.count).sum();
+            if count > 0 {
+                tier1_totals.push((tier1_cat, count));
             }
         }
     }
+    tier1_totals.sort_by_key(|b| std::cmp::Reverse(b.1)); // Sort descending by count
 
-    // Empty line before total PII
-    println!();
+    // Find the longest category name for alignment
+    let max_category_len = TIER1_CATEGORIES_ORDERED
+        .iter()
+        .map(|s| s.len())
+        .max()
+        .unwrap_or(20);
 
-    let pii_percentage = (total_pii as f64 / total_columns as f64) * 100.0;
-    // Highlight Total PII number and percentage with bold + red formatting (using ANSI escape codes)
-    // \x1b[1;31m = bold + red text, \x1b[0m = reset
-    println!(
-        "{:<24} {:<18} \x1b[1;31m{:<10} {:>6.1}%\x1b[0m",
-        "TOTAL PII", "", total_pii, pii_percentage
-    );
-
-    // Print "No PII" categories
-    for result in &no_pii_results {
-        let percentage = (result.count as f64 / total_columns as f64) * 100.0;
+    // Print detected categories
+    for (tier1, count) in &tier1_totals {
+        let pii_percentage = ((*count as f64) / (total_pii as f64)) * 100.0;
         println!(
-            "{:<24} {:<18} {:<10} {:>6.1}%",
-            result.tier1, result.tier2, result.count, percentage
+            "  {:<width$} {:>5}  {:.1}%",
+            tier1,
+            count,
+            pii_percentage,
+            width = max_category_len
         );
     }
-
     println!();
+
+    // Top findings section
+    println!("\x1b[1mTop Findings\x1b[0m");
+    println!("{}", "─".repeat(59));
+
+    // Show top 3 tier1 categories with examples
+    for (idx, (tier1, _)) in tier1_totals.iter().take(3).enumerate() {
+        if idx > 0 {
+            println!();
+        }
+        println!("{}", tier1);
+
+        if let Some(group) = tier1_groups.get(tier1) {
+            // Collect all examples across tier2 categories
+            let mut all_examples: Vec<String> = Vec::new();
+            for result in group {
+                all_examples.extend(result.examples.clone());
+            }
+
+            // Show up to 3 examples
+            for example in all_examples.iter().take(3) {
+                println!("  {}", example);
+            }
+
+            // If more than 3 examples, show "... and N more"
+            if all_examples.len() > 3 {
+                let remaining = all_examples.len() - 3;
+                println!("  ... and {} more", remaining);
+            }
+        }
+    }
+    println!();
+
+    // Hint
+    println!("\x1b[1mHint\x1b[0m");
+    println!("  Use --verbose to show all detected columns");
 }
 
 #[cfg(test)]
@@ -560,9 +627,9 @@ mod tests {
             .map(|i| (format!("t{i}"), "first_name".to_string()))
             .collect::<Vec<_>>();
         let stats = aggregate_by_category(&pairs, &cfg);
-        // Find the "name" entry (first_name maps to "name" category)
-        let name_entry = stats.iter().find(|r| r.tier2 == "name");
-        if let Some(entry) = name_entry {
+        // Find the "Names" entry (first_name maps to "Names" tier1 category)
+        let names_entry = stats.iter().find(|r| r.tier1 == "Names");
+        if let Some(entry) = names_entry {
             assert_eq!(entry.count, 5);
             assert!(entry.examples.len() <= 3);
         }
