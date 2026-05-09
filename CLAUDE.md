@@ -2,23 +2,11 @@
 
 PII-filtering CLI that transparently intercepts AI agent query commands and redacts sensitive data before it reaches the model context.
 
-## Current step
+## Status
 
-Milestone: Milestone 9 — GitHub Copilot CLI (DEFERRED)
-Step: 58 (next if picked up — format detection in hook.rs)
+Milestone 9 (GitHub Copilot CLI) is deferred pending transparent-rewrite support in the Copilot hook.
 
-Status:
-- [x] Prototype complete
-- [x] Milestone 1 complete (config, patterns, harness, error — all 31 tests pass)
-- [x] Milestone 2 complete (Gate 2 redactor — 60 tests pass, false-negative rate = 0)
-- [x] Milestone 3 complete (Gate 1 tokenizer + column extractor + build_plan — 43 tests)
-- [x] Milestone 4 complete (gate run pipeline + integration tests — 119 tests pass)
-- [x] Milestone 5 complete (hook config-driven + init + config_cmd + list + validate — 154 tests pass)
-- [x] Milestone 6 complete (README, error audit, criterion benchmark 25ms<100ms NFR, smoke test)
-- [x] Milestone 8 complete (opencode: `tool.execute.before` plugin + `gate init --harness opencode` + validate harness detection — 212 tests pass)
-- [ ] Milestone 9 — GitHub Copilot CLI: **DEFERRED** to a future release. Reason: Copilot CLI's `preToolUse` hook only supports deny-with-suggestion (advisory enforcement); we'll revisit when it gains a transparent-rewrite contract.
-
-Notes:
+## Notes
 `crates/gate/src/run.rs` is the production Gate 1 + Gate 2 pipeline. Loads config,
 runs gate1::extract_columns + gate1::build_plan on the SQL arg, spawns the subprocess,
 pipes stdout through common::redactor::redact. All subcommands fully implemented.
