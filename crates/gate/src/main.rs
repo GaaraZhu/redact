@@ -63,7 +63,11 @@ enum Commands {
     /// Read columnar JSON from stdin and report PII-exposed column names.
     /// Pipe the output of a schema query (SELECT TABLE_NAME, COLUMN_NAME ...) into this command.
     /// Example: tkdbr query --sql "SELECT TABLE_NAME, COLUMN_NAME FROM ..." | gate scan
-    Scan,
+    Scan {
+        /// Show all detected columns in the Top Findings section (not truncated)
+        #[arg(long)]
+        verbose: bool,
+    },
     /// Load config, compile patterns, and report errors or warnings
     Validate,
     /// Enable PII redaction (sets enabled: true in config)
@@ -88,7 +92,7 @@ fn main() {
             init_only,
         } => config_cmd::run(path, print, init_only),
         Commands::List => list::run(),
-        Commands::Scan => scan::run(),
+        Commands::Scan { verbose } => scan::run(verbose),
         Commands::Validate => validate::run(),
         Commands::Enable => enable_disable::run(true),
         Commands::Disable => enable_disable::run(false),

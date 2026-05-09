@@ -32,7 +32,7 @@ const TIER1_CATEGORIES_ORDERED: &[&str] = &[
 ///
 /// The subcommand extracts (table_name, column_name) pairs and runs Gate 1 column
 /// classification on each column name.
-pub fn run() {
+pub fn run(verbose: bool) {
     let config = match Config::load() {
         Ok(c) => c,
         Err(e) => exit_with_error(&format!(
@@ -61,7 +61,7 @@ pub fn run() {
     let stats = aggregate_by_category(&pairs, &config);
 
     // Render the report
-    print_report(&pairs, &stats);
+    print_report(&pairs, &stats, verbose);
 
     // Exit code: 0 if no PII found, 1 if any PII columns detected
     let has_pii = stats.iter().any(|result| result.tier1 != "No PII");
@@ -377,7 +377,7 @@ fn aggregate_by_category(
 }
 
 /// Print the scan report to stdout.
-fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult]) {
+fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verbose: bool) {
     let total_columns = pairs.len();
     let unique_tables = pairs
         .iter()
@@ -512,23 +512,31 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult]) {
                 all_examples.extend(result.examples.clone());
             }
 
-            // Show up to 3 examples
-            for example in all_examples.iter().take(3) {
-                println!("  {}", example);
-            }
+            if verbose {
+                // Show all examples in verbose mode
+                for example in &all_examples {
+                    println!("  {}", example);
+                }
+            } else {
+                // Show up to 3 examples and "... and N more" if needed
+                for example in all_examples.iter().take(3) {
+                    println!("  {}", example);
+                }
 
-            // If more than 3 examples, show "... and N more"
-            if all_examples.len() > 3 {
-                let remaining = all_examples.len() - 3;
-                println!("  ... and {} more", remaining);
+                // If more than 3 examples, show "... and N more"
+                if all_examples.len() > 3 {
+                    let remaining = all_examples.len() - 3;
+                    println!("  ... and {} more", remaining);
+                }
             }
         }
     }
     println!();
 
-    // Hint
-    println!("\x1b[1mHint\x1b[0m");
-    println!("  Use --verbose to show all detected columns");
+    if !verbose {
+        println!("\x1b[1mHint\x1b[0m");
+        println!("  Use --verbose to show all detected columns");
+    }
 }
 
 #[cfg(test)]
