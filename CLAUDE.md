@@ -1,12 +1,6 @@
 # gate
 
-PII-filtering CLI that transparently intercepts AI agent query commands and redacts sensitive data before it reaches the model context. See `docs/` for full context.
-
-## Docs
-
-- `docs/requirements.md` — what to build and why
-- `docs/design.md` — architecture, call chain, output format, design decisions
-- `docs/plan.md` — milestone-by-milestone implementation plan with step numbers
+PII-filtering CLI that transparently intercepts AI agent query commands and redacts sensitive data before it reaches the model context.
 
 ## Current step
 
@@ -22,7 +16,7 @@ Status:
 - [x] Milestone 5 complete (hook config-driven + init + config_cmd + list + validate — 154 tests pass)
 - [x] Milestone 6 complete (README, error audit, criterion benchmark 25ms<100ms NFR, smoke test)
 - [x] Milestone 8 complete (opencode: `tool.execute.before` plugin + `gate init --harness opencode` + validate harness detection — 212 tests pass)
-- [ ] Milestone 9 — GitHub Copilot CLI: **DEFERRED** to a future release. Spec retained in `docs/plan.md`. Reason: Copilot CLI's `preToolUse` hook only supports deny-with-suggestion (advisory enforcement); we'll revisit when it gains a transparent-rewrite contract.
+- [ ] Milestone 9 — GitHub Copilot CLI: **DEFERRED** to a future release. Reason: Copilot CLI's `preToolUse` hook only supports deny-with-suggestion (advisory enforcement); we'll revisit when it gains a transparent-rewrite contract.
 
 Notes:
 `crates/gate/src/run.rs` is the production Gate 1 + Gate 2 pipeline. Loads config,
@@ -77,7 +71,7 @@ thiserror = "1"
 tempfile = "3"   # test-only
 ```
 
-Gate 1 uses a hand-written SQL tokenizer — do NOT add `sqlparser-rs`. See design.md for rationale.
+Gate 1 uses a hand-written SQL tokenizer — do NOT add `sqlparser-rs`.
 
 ## Safety pass (required after every implementation step)
 
@@ -86,7 +80,7 @@ Run this checklist before marking any step complete:
 1. **False-negative scan** — review the new/changed redaction logic and identify any PII patterns that could slip through (e.g. value types not covered by regex, Luhn bypass, forced-column path skipped).
 2. **Test coverage** — for each identified gap, add a test that would catch it. The test must fail before the fix and pass after.
 3. **Non-negotiables audit** — verify every item in the Non-negotiables section below is still upheld by the current code.
-4. **Exit criteria check** — re-read the current milestone's exit criterion in `docs/plan.md` and confirm it is fully satisfied.
+4. **Exit criteria check** — verify milestone exit criteria are fully satisfied.
 
 Do not advance the "Current step" in this file until all four items are checked.
 
@@ -99,7 +93,7 @@ Do not advance the "Current step" in this file until all four items are checked.
 - **`gate init` and interactive `gate config` are blocked inside agent harnesses.** Check `is_agent_harness()` at the top of those handlers.
 - **`gate hook` must be fast on the passthrough path** — single-digit ms. It fires on every Bash command.
 - **Errors use `{"error": "..."}` format with exit code 1**, matching toolkit convention.
-- **Hook output format must match the detected input format.** Today only the snake_case Claude Code shape is implemented (`hookSpecificOutput.updatedInput`). When opencode lands (Milestone 9), the snake_case shape is reused — the opencode plugin formats its payload as snake_case before piping to `gate hook`, so the Rust side stays single-format. Copilot CLI's camelCase deny-with-suggestion shape is specced in `docs/plan.md` Milestone 8 but deferred.
+- **Hook output format must match the detected input format.** Today only the snake_case Claude Code shape is implemented (`hookSpecificOutput.updatedInput`). When opencode lands, the snake_case shape is reused — the opencode plugin formats its payload as snake_case before piping to `gate hook`, so the Rust side stays single-format. Copilot CLI support is deferred.
 
 ## Key invariants by file
 
@@ -114,6 +108,6 @@ Do not advance the "Current step" in this file until all four items are checked.
 ## Testing approach
 
 - Write tests **before** or **alongside** each implementation step, not after.
-- Each milestone has an exit criterion in `docs/plan.md` — do not advance until it passes.
+- Each milestone has exit criteria — do not advance until all tests pass.
 - Milestone 2 (Gate 2 / `redactor.rs`) requires golden-file tests with realistic PII data. False-negative rate on the test corpus must be 0.
 - Integration tests for `gate run` use a fake-tool binary (a shell script emitting known JSON for known SQL).
