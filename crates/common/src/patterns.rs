@@ -334,6 +334,45 @@ pub fn classify_column(column_name: &str) -> Option<&'static str> {
     None
 }
 
+/// Maps the pii_type label returned by `classify_column` to a tier-1 reporting category.
+///
+/// Keep this function adjacent to `TOKEN_SYNONYMS` and `classify_column`: any new pii_type
+/// added to either of those must also be covered here. The exhaustive test
+/// `no_pii_type_returned_by_classify_maps_to_other` in this module enforces that invariant.
+pub fn map_to_tier1_category(tier2: &str) -> &'static str {
+    match tier2 {
+        // Names
+        "name" | "salutation" => "Names",
+        // Demographics
+        "gender" | "nationality" => "Demographics",
+        // Government IDs
+        "national_id" | "tax_id" | "visa" | "resident_id" | "immigration_id" | "passport"
+        | "license" | "ssn" => "Government IDs",
+        // Contact
+        "email" | "phone" => "Contact",
+        // Date of birth
+        "dob" => "Date of birth",
+        // Location of birth
+        "lob" => "Location of birth",
+        // Address & location
+        "address" | "gps" => "Address & location",
+        // Financial
+        "credit_card" | "cvv" | "iban" | "swift" | "bank_account" | "expiry" => "Financial",
+        // Employment
+        "salary" | "job_title" => "Employment",
+        // Health & medical
+        "medical" | "health" | "npi" => "Health & medical",
+        // Online & technical — includes personal identifiers (user_id, device_id, session_id, etc.)
+        "username" | "auth_token" | "mac_address" | "ip" | "id" => "Online & technical",
+        // Biometric
+        "biometric" => "Biometric",
+        // Family & relationships
+        "next_of_kin" | "emergency_contact" => "Family & relationships",
+        // Unknown — surface rather than silently drop
+        _ => "Other",
+    }
+}
+
 pub struct CompiledPattern {
     pub name: String,
     pub regex: Regex,
@@ -944,5 +983,92 @@ mod tests {
         assert_eq!(classify_column("account_id"), None);
         assert_eq!(classify_column("vendor_id"), None);
         assert_eq!(classify_column("category_id"), None);
+    }
+
+    // ── map_to_tier1_category ─────────────────────────────────────────────────
+
+    #[test]
+    fn map_email_to_contact() {
+        assert_eq!(map_to_tier1_category("email"), "Contact");
+        assert_eq!(map_to_tier1_category("phone"), "Contact");
+    }
+
+    #[test]
+    fn map_tax_id_to_government_ids() {
+        assert_eq!(map_to_tier1_category("tax_id"), "Government IDs");
+        assert_eq!(map_to_tier1_category("national_id"), "Government IDs");
+        assert_eq!(map_to_tier1_category("visa"), "Government IDs");
+    }
+
+    #[test]
+    fn map_name_to_names() {
+        assert_eq!(map_to_tier1_category("name"), "Names");
+        assert_eq!(map_to_tier1_category("salutation"), "Names");
+    }
+
+    #[test]
+    fn map_id_to_online_technical() {
+        // classify_column returns "id" for all PERSON_ID_PREFIXES columns;
+        // must map to a visible tier-1 category, not "Other".
+        assert_eq!(map_to_tier1_category("id"), "Online & technical");
+    }
+
+    #[test]
+    fn map_unknown_to_other() {
+        assert_eq!(map_to_tier1_category("unknown_type"), "Other");
+    }
+
+    #[test]
+    fn no_pii_type_returned_by_classify_maps_to_other() {
+        // Exhaustive guard: every pii_type classify_column can return must have
+        // an explicit tier-1 mapping. Fails when a new type is added to
+        // TOKEN_SYNONYMS / classify_column without updating map_to_tier1_category.
+        let known_pii_types = [
+            "email",
+            "phone",
+            "ssn",
+            "dob",
+            "lob",
+            "credit_card",
+            "cvv",
+            "passport",
+            "npi",
+            "license",
+            "ip",
+            "salutation",
+            "name",
+            "gender",
+            "nationality",
+            "national_id",
+            "tax_id",
+            "visa",
+            "resident_id",
+            "immigration_id",
+            "address",
+            "gps",
+            "bank_account",
+            "iban",
+            "swift",
+            "expiry",
+            "salary",
+            "job_title",
+            "medical",
+            "health",
+            "username",
+            "auth_token",
+            "mac_address",
+            "biometric",
+            "next_of_kin",
+            "emergency_contact",
+            "id",
+        ];
+        for pii_type in &known_pii_types {
+            assert_ne!(
+                map_to_tier1_category(pii_type),
+                "Other",
+                "pii_type '{}' falls through to Other — add it to map_to_tier1_category",
+                pii_type
+            );
+        }
     }
 }
