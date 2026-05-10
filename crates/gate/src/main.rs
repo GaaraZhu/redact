@@ -37,7 +37,8 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Register the PreToolUse hook in the agent harness settings
+    /// Register the PreToolUse hook in the agent harness settings.
+    /// With --mcp, registers a gate mcp proxy entry for an MCP server instead.
     Init {
         /// Target harness: claude-code (default) or opencode
         #[arg(long, default_value = "claude-code")]
@@ -45,6 +46,12 @@ enum Commands {
         /// Installation scope for opencode: global (default) or project
         #[arg(long, default_value = "global")]
         scope: String,
+        /// Name of the MCP server to register (e.g. "postgres")
+        #[arg(long)]
+        mcp: Option<String>,
+        /// Upstream MCP server command string (used with --mcp), e.g. "uvx mcp-server-postgres"
+        #[arg(long = "mcp-cmd")]
+        mcp_cmd: Option<String>,
     },
     /// Manage the gate config file
     Config {
@@ -71,6 +78,13 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Run a stdio MCP proxy: intercepts tools/call responses and redacts PII.
+    /// Usage: gate mcp [--] <upstream-cmd> [args...]
+    /// Example: gate mcp -- uvx mcp-server-postgres
+    Mcp {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        upstream: Vec<String>,
+    },
     /// Load config, compile patterns, and report errors or warnings
     Validate,
     /// Enable PII redaction (sets enabled: true in config)
@@ -88,7 +102,12 @@ fn main() {
     match cli.command {
         Commands::Hook => hook::run(),
         Commands::Run { verbose, args } => run::run(args, verbose),
-        Commands::Init { harness, scope } => init::run(&harness, &scope),
+        Commands::Init {
+            harness,
+            scope,
+            mcp,
+            mcp_cmd,
+        } => init::run(&harness, &scope, mcp.as_deref(), mcp_cmd.as_deref()),
         Commands::Config {
             path,
             print,
@@ -96,6 +115,15 @@ fn main() {
         } => config_cmd::run(path, print, init_only),
         Commands::List => list::run(),
         Commands::Scan { verbose, json } => scan::run(verbose, json),
+        Commands::Mcp { upstream } => {
+            // Strip a leading "--" separator if clap passed it through
+            let upstream = if upstream.first().map(String::as_str) == Some("--") {
+                upstream[1..].to_vec()
+            } else {
+                upstream
+            };
+            mcp::run(upstream)
+        }
         Commands::Validate => validate::run(),
         Commands::Enable => enable_disable::run(true),
         Commands::Disable => enable_disable::run(false),

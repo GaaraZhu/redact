@@ -5,13 +5,36 @@ use std::path::{Path, PathBuf};
 
 const HOOK_COMMAND: &str = "gate hook";
 
-pub fn run(harness: &str, scope: &str) {
+pub fn run(harness: &str, scope: &str, mcp: Option<&str>, mcp_cmd: Option<&str>) {
     if is_agent_harness() {
         exit_with_error(
             "gate init is not available inside an agent harness. \
              Run `gate init` in a terminal session outside the agent.",
         );
     }
+
+    if let Some(server_name) = mcp {
+        let cmd_str = mcp_cmd.unwrap_or_else(|| {
+            exit_with_error(
+                "--mcp-cmd is required when --mcp is set. \
+                Example: gate init --mcp postgres --mcp-cmd \"uvx mcp-server-postgres\"",
+            )
+        });
+        match harness {
+            "claude-code" => {
+                let path = match claude_settings_path() {
+                    Ok(p) => p,
+                    Err(e) => exit_with_error(&format!("cannot resolve settings path: {e}")),
+                };
+                register_mcp_server(&path, server_name, cmd_str);
+            }
+            _ => exit_with_error(&format!(
+                "MCP registration is only supported for claude-code harness (got '{harness}')"
+            )),
+        }
+        return;
+    }
+
     match harness {
         "claude-code" => {
             let path = match claude_settings_path() {
@@ -165,6 +188,51 @@ fn write_atomic(path: &Path, value: &Value) -> anyhow::Result<()> {
     std::fs::write(&tmp_path, &json_str)?;
     std::fs::rename(&tmp_path, path)?;
     Ok(())
+}
+
+fn register_mcp_server(path: &Path, server_name: &str, cmd_str: &str) {
+    let upstream_parts = match shell_words::split(cmd_str) {
+        Ok(parts) if !parts.is_empty() => parts,
+        Ok(_) => exit_with_error("--mcp-cmd must not be empty"),
+        Err(e) => exit_with_error(&format!("invalid --mcp-cmd: {e}")),
+    };
+
+    // gate mcp -- <upstream parts...>
+    let mut args: Vec<Value> = vec![json!("mcp"), json!("--")];
+    args.extend(upstream_parts.iter().map(|s| json!(s)));
+
+    let server_entry = json!({
+        "command": "gate",
+        "args": args,
+        "env": {}
+    });
+
+    let mut settings = read_settings(path);
+    normalize_mcp_servers(&mut settings);
+    settings["mcpServers"][server_name] = server_entry;
+
+    write_atomic(path, &settings)
+        .unwrap_or_else(|e| exit_with_error(&format!("failed to write {}: {e}", path.display())));
+    println!(
+        "MCP server '{}' registered in {} (command: gate mcp -- {})",
+        server_name,
+        path.display(),
+        upstream_parts.join(" ")
+    );
+    println!("Run `gate mcp -- {cmd_str}` to test the proxy manually.");
+}
+
+fn normalize_mcp_servers(settings: &mut Value) {
+    if !settings.is_object() {
+        *settings = json!({});
+    }
+    let obj = settings.as_object_mut().unwrap();
+    let entry = obj
+        .entry("mcpServers".to_string())
+        .or_insert_with(|| json!({}));
+    if !entry.is_object() {
+        *entry = json!({});
+    }
 }
 
 fn claude_settings_path() -> Result<PathBuf, String> {

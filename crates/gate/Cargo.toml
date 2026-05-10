@@ -11,6 +11,7 @@ anyhow = { workspace = true }
 regex = { workspace = true }
 common = { path = "../common" }
 gate1 = { path = "../gate1" }
+mcp = { path = "../mcp" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
