@@ -339,6 +339,80 @@ fn aggregate_by_category(
     results
 }
 
+/// Sensitivity weight for a tier-1 reporting category.
+///
+/// 3 = Critical  — identity theft enablers; regulated (HIPAA / PCI / GDPR special category)
+/// 2 = Elevated  — direct PII; breach-reportable; linkage risk
+/// 1 = Standard  — PII but less sensitive; often contextual
+/// 0 = not a PII category
+fn category_weight(tier1: &str) -> u8 {
+    match tier1 {
+        "Government IDs" | "Health & medical" | "Financial" | "Biometric" => 3,
+        "Contact"
+        | "Names"
+        | "Date of birth"
+        | "Location of birth"
+        | "Family & relationships"
+        | "Employment" => 2,
+        "Address & location" | "Online & technical" | "Demographics" => 1,
+        _ => 0,
+    }
+}
+
+/// Compute risk level from weighted category presence.
+///
+/// max_tier  = highest weight tier with ≥1 column present
+/// high_count = columns in tier-3 (Critical) categories
+/// pii_ratio  = total_pii / total_columns
+///
+/// CRITICAL: max_tier==3 AND (high_count >= 3 OR pii_ratio > 0.10)
+///           max_tier==2 AND pii_ratio > 0.25
+/// HIGH:     max_tier==3 (any critical-sensitivity column present)
+///           max_tier==2 AND pii_ratio > 0.05
+///           max_tier==1 AND pii_ratio > 0.25
+/// LOW:      everything else
+fn compute_risk_level(pii_results: &[&TieredCategoryResult], total_columns: usize) -> &'static str {
+    if total_columns == 0 || pii_results.is_empty() {
+        return "LOW";
+    }
+
+    let total_pii: usize = pii_results.iter().map(|r| r.count).sum();
+    let pii_ratio = total_pii as f64 / total_columns as f64;
+
+    let max_tier = pii_results
+        .iter()
+        .map(|r| category_weight(r.tier1))
+        .max()
+        .unwrap_or(0);
+
+    let high_count: usize = pii_results
+        .iter()
+        .filter(|r| category_weight(r.tier1) == 3)
+        .map(|r| r.count)
+        .sum();
+
+    match max_tier {
+        3 => {
+            if high_count >= 3 || pii_ratio > 0.10 {
+                "CRITICAL"
+            } else {
+                "HIGH"
+            }
+        }
+        2 => {
+            if pii_ratio > 0.25 {
+                "CRITICAL"
+            } else if pii_ratio > 0.05 {
+                "HIGH"
+            } else {
+                "LOW"
+            }
+        }
+        1 if pii_ratio > 0.25 => "HIGH",
+        _ => "LOW",
+    }
+}
+
 /// Print the scan report to stdout.
 fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verbose: bool) {
     let total_columns = pairs.len();
@@ -380,14 +454,7 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
         0.0
     };
 
-    // Calculate risk level
-    let risk_level = if total_pii as f64 / total_columns as f64 > 0.25 {
-        "CRITICAL"
-    } else if total_pii as f64 / total_columns as f64 > 0.1 {
-        "HIGH"
-    } else {
-        "LOW"
-    };
+    let risk_level = compute_risk_level(&pii_results, total_columns);
 
     println!("  {:<19} {:>4}", "Tables scanned", unique_tables);
     println!("  {:<19} {:>4}", "Columns scanned", total_columns);
@@ -404,8 +471,9 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
 
     // Add colored risk level
     let risk_color = match risk_level {
-        "CRITICAL" | "HIGH" => "\x1b[31m", // Red
-        "LOW" => "\x1b[32m",               // Green
+        "CRITICAL" => "\x1b[31m", // Red
+        "HIGH" => "\x1b[33m",     // Yellow
+        "LOW" => "\x1b[32m",      // Green
         _ => "",
     };
     let reset = "\x1b[0m";
@@ -790,5 +858,86 @@ mod tests {
             !stats.iter().any(|r| r.tier1 == "Other"),
             "id-typed columns must not fall into Other"
         );
+    }
+
+    // ── compute_risk_level ────────────────────────────────────────────────────
+
+    fn make_result(tier1: &'static str, count: usize) -> TieredCategoryResult {
+        TieredCategoryResult {
+            tier1,
+            count,
+            examples: vec![],
+        }
+    }
+
+    #[test]
+    fn risk_single_ssn_is_high_not_low() {
+        // 1 SSN column out of 200 — old formula: LOW (0.5%); new: HIGH (any tier-3)
+        let r = make_result("Government IDs", 1);
+        assert_eq!(compute_risk_level(&[&r], 200), "HIGH");
+    }
+
+    #[test]
+    fn risk_many_critical_columns_is_critical() {
+        // 5 SSN + 3 medical out of 50 — tier-3, high_count >= 3
+        let r1 = make_result("Government IDs", 5);
+        let r2 = make_result("Health & medical", 3);
+        assert_eq!(compute_risk_level(&[&r1, &r2], 50), "CRITICAL");
+    }
+
+    #[test]
+    fn risk_critical_tier_high_ratio_is_critical() {
+        // 12 SSN columns out of 100 — tier-3, pii_ratio > 0.10
+        let r = make_result("Government IDs", 12);
+        assert_eq!(compute_risk_level(&[&r], 100), "CRITICAL");
+    }
+
+    #[test]
+    fn risk_many_names_and_emails_is_critical() {
+        // 30 name+email out of 100 — tier-2, pii_ratio > 0.25
+        let r1 = make_result("Names", 20);
+        let r2 = make_result("Contact", 10);
+        assert_eq!(compute_risk_level(&[&r1, &r2], 100), "CRITICAL");
+    }
+
+    #[test]
+    fn risk_few_emails_is_high() {
+        // 6 email+phone out of 100 — tier-2, pii_ratio > 0.05
+        let r = make_result("Contact", 6);
+        assert_eq!(compute_risk_level(&[&r], 100), "HIGH");
+    }
+
+    #[test]
+    fn risk_tiny_contact_exposure_is_low() {
+        // 5 email columns out of 100 — tier-2, pii_ratio == 0.05, not > 0.05
+        let r = make_result("Contact", 5);
+        assert_eq!(compute_risk_level(&[&r], 100), "LOW");
+    }
+
+    #[test]
+    fn risk_address_only_under_threshold_is_low() {
+        // 20 address columns out of 100 — tier-1, pii_ratio = 0.20
+        let r = make_result("Address & location", 20);
+        assert_eq!(compute_risk_level(&[&r], 100), "LOW");
+    }
+
+    #[test]
+    fn risk_many_address_columns_is_high() {
+        // 30 address cols out of 100 — tier-1, pii_ratio > 0.25
+        let r = make_result("Address & location", 30);
+        assert_eq!(compute_risk_level(&[&r], 100), "HIGH");
+    }
+
+    #[test]
+    fn risk_no_pii_is_low() {
+        assert_eq!(compute_risk_level(&[], 100), "LOW");
+        assert_eq!(compute_risk_level(&[], 0), "LOW");
+    }
+
+    #[test]
+    fn risk_demographics_only_is_low() {
+        // Demographics is tier-1; even if > 0.25 it's HIGH, but low count is LOW
+        let r = make_result("Demographics", 5);
+        assert_eq!(compute_risk_level(&[&r], 100), "LOW");
     }
 }

@@ -96,7 +96,13 @@ Hint
   Use --verbose to show all detected columns
 ```
 
-Risk levels: **CRITICAL** (>25% of columns are PII), **HIGH** (>10%), **LOW** (≤10%). The command exits with code 1 if any PII columns are found, making it scriptable in CI audits. Pass `--verbose` to show the full list of detected columns in each category instead of a truncated preview.
+Risk level is weighted by category sensitivity — one SSN column matters more than twenty address columns. The command exits with code 1 if any PII columns are found, making it scriptable in CI audits. Pass `--verbose` to show the full list of detected columns.
+
+| Sensitivity | Categories | Risk floor |
+|-------------|-----------|------------|
+| **Critical** | Government IDs, Health & medical, Financial, Biometric | **HIGH** always; **CRITICAL** if ≥3 columns or >10% of schema |
+| **Elevated** | Contact, Names, Date of birth, Location of birth, Family & relationships, Employment | **HIGH** if >5% of schema; **CRITICAL** if >25% |
+| **Standard** | Address & location, Online & technical, Demographics | **HIGH** if >25% of schema |
 
 > **Note:** `gate scan` detects PII by column name only. A LOW result means your column names look clean — it does not mean the data is safe. Gate 2 additionally inspects values at query time, catching PII in free-text, JSON, and ambiguously-named columns that scan cannot see.
 
