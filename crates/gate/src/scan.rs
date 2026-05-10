@@ -505,7 +505,11 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
     }
     println!();
 
+    println!("\x1b[1mNote\x1b[0m");
+    println!("  Scan detects PII by column name only. Gate 2 also");
+    println!("  catches values in text/JSON columns at query time.");
     if !verbose {
+        println!();
         println!("\x1b[1mHint\x1b[0m");
         println!("  Use --verbose to show all detected columns");
     }

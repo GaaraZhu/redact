@@ -88,11 +88,17 @@ Government IDs
   employees.tax_id
   employees.national_id
 
+Note
+  Scan detects PII by column name only. Gate 2 also
+  catches values in text/JSON columns at query time.
+
 Hint
   Use --verbose to show all detected columns
 ```
 
 Risk levels: **CRITICAL** (>25% of columns are PII), **HIGH** (>10%), **LOW** (≤10%). The command exits with code 1 if any PII columns are found, making it scriptable in CI audits. Pass `--verbose` to show the full list of detected columns in each category instead of a truncated preview.
+
+> **Note:** `gate scan` detects PII by column name only. A LOW result means your column names look clean — it does not mean the data is safe. Gate 2 additionally inspects values at query time, catching PII in free-text, JSON, and ambiguously-named columns that scan cannot see.
 
 If you have not yet created a config, run `gate config --init-only` first to generate a starter config. No tools need to be configured to use `gate scan` — it only uses built-in column-name detection.
 
