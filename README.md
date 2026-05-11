@@ -141,8 +141,11 @@ If you have not yet created a config, run `gate config --init-only` first to gen
 4. *(Optional)* **Register MCP server proxies** for any MCP servers your agent uses:
 
    ```bash
-   # Claude Code
+   # Claude Code — user-level (applies to all projects, written to ~/.claude.json)
    gate init --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
+
+   # Claude Code — project-level (applies to this project only, written to ./.mcp.json)
+   gate init --scope project --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
 
    # OpenCode
    gate init --harness opencode --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
@@ -207,8 +210,11 @@ AI calls MCP server (tools/call)
 Register a proxy for an MCP server:
 
 ```bash
-# Claude Code
+# Claude Code — user-level (~/.claude.json, applies to all projects)
 gate init --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
+
+# Claude Code — project-level (./.mcp.json, applies to this project only)
+gate init --scope project --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
 
 # OpenCode
 gate init --harness opencode --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
@@ -387,7 +393,7 @@ mcp:
 | Command | Purpose |
 |---|---|
 | `gate init [--harness claude-code\|opencode] [--scope global\|project]` | Register the hook in the agent harness. `claude-code` (default) writes `~/.claude/settings.json`; `opencode` writes a TypeScript plugin at the chosen scope. |
-| `gate init --mcp <name> --mcp-cmd <cmd>` | Register a `gate mcp` proxy for an MCP server in the harness config (supports `--harness claude-code\|opencode`). |
+| `gate init --mcp <name> --mcp-cmd <cmd>` | Register a `gate mcp` proxy for an MCP server. For `claude-code`: `--scope user` (default) writes to `~/.claude.json`; `--scope project` writes to `./.mcp.json`. For `opencode`: uses the opencode config at the chosen scope. |
 | `gate mcp [--] <upstream-cmd> [args...]` | Run a stdio MCP proxy in front of `<upstream-cmd>`. Intercepts `tools/call` responses and redacts PII before they reach the model. Usually invoked by the harness, not directly. |
 | `gate uninstall` | Remove the hook, config directory, and gate-generated opencode plugins (with confirmation) |
 | `gate enable` | Enable PII redaction (sets `enabled: true` in config) |

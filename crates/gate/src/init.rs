@@ -22,9 +22,9 @@ pub fn run(harness: &str, scope: &str, mcp: Option<&str>, mcp_cmd: Option<&str>)
         });
         match harness {
             "claude-code" => {
-                let path = match claude_mcp_config_path() {
+                let path = match claude_code_mcp_path(scope) {
                     Ok(p) => p,
-                    Err(e) => exit_with_error(&format!("cannot resolve settings path: {e}")),
+                    Err(e) => exit_with_error(&e),
                 };
                 register_mcp_server(&path, server_name, cmd_str);
             }
@@ -249,8 +249,12 @@ fn claude_settings_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".claude/settings.json"))
 }
 
-/// Claude Code stores MCP servers in ~/.claude.json (not settings.json).
-fn claude_mcp_config_path() -> Result<PathBuf, String> {
+/// Resolve the Claude Code MCP config path for the given scope.
+/// "project" → ./.mcp.json; anything else ("user", "global") → ~/.claude.json.
+fn claude_code_mcp_path(scope: &str) -> Result<PathBuf, String> {
+    if scope == "project" {
+        return Ok(PathBuf::from(".mcp.json"));
+    }
     let home =
         std::env::var("HOME").map_err(|_| "HOME environment variable not set".to_string())?;
     Ok(PathBuf::from(home).join(".claude.json"))
@@ -460,7 +464,66 @@ mod tests {
         assert!(serde_json::from_str::<Value>(&contents).is_ok());
     }
 
-    // register_mcp_server (claude-code)
+    // claude_code_mcp_path
+
+    #[test]
+    fn mcp_path_default_scope_uses_home() {
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", "/test/home") };
+        let path = claude_code_mcp_path("global").unwrap();
+        match saved {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        assert_eq!(path, PathBuf::from("/test/home/.claude.json"));
+    }
+
+    #[test]
+    fn mcp_path_user_scope_uses_home() {
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", "/test/home") };
+        let path = claude_code_mcp_path("user").unwrap();
+        match saved {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        assert_eq!(path, PathBuf::from("/test/home/.claude.json"));
+    }
+
+    #[test]
+    fn mcp_path_project_scope_is_relative() {
+        let path = claude_code_mcp_path("project").unwrap();
+        assert_eq!(path, PathBuf::from(".mcp.json"));
+    }
+
+    // register_mcp_server (claude-code, project scope → .mcp.json)
+
+    #[test]
+    fn mcp_server_project_scope_written_to_mcp_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".mcp.json");
+        register_mcp_server(&path, "postgres", "uvx mcp-server-postgres");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["postgres"]["command"], "gate");
+        let args = v["mcpServers"]["postgres"]["args"].as_array().unwrap();
+        assert_eq!(args[0], "mcp");
+        assert_eq!(args[1], "--");
+        assert_eq!(args[2], "uvx");
+    }
+
+    #[test]
+    fn mcp_server_project_scope_preserves_existing_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".mcp.json");
+        let initial = json!({"mcpServers": {"other": {"command": "other", "args": []}}});
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        register_mcp_server(&path, "postgres", "uvx mcp-server-postgres");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(v["mcpServers"]["other"].is_object());
+        assert!(v["mcpServers"]["postgres"].is_object());
+    }
+
+    // register_mcp_server (claude-code, user scope → ~/.claude.json)
 
     #[test]
     fn mcp_server_written_to_empty_settings() {
