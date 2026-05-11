@@ -425,16 +425,16 @@ mcp:
 |---|---|
 | `gate init [--harness claude-code\|opencode] [--scope global\|project]` | Register the hook in the agent harness. `claude-code` (default) writes `~/.claude/settings.json`; `opencode` writes a TypeScript plugin at the chosen scope. |
 | `gate init --wrap-mcp [--servers a,b] [--yes]` | Convert existing MCP servers to `gate mcp` proxies. Dry-run by default; `--yes` to apply. `--servers` limits to a comma-separated list; omit to wrap all. Already-proxied servers are skipped. Respects `--harness` and `--scope`. |
-| `gate init --mcp <name> --mcp-cmd <cmd>` | Register a single `gate mcp` proxy. For `claude-code`: `--scope user` (default) writes to `~/.claude.json`; `--scope project` writes to `./.mcp.json`. |
+| `gate init --mcp <name> --mcp-cmd <cmd>` | Register a single `gate mcp` proxy. For `claude-code`: `--scope global` (default) writes to `~/.claude.json`; `--scope project` writes to `./.mcp.json`. |
 | `gate mcp [--] <upstream-cmd> [args...]` | Run a stdio MCP proxy in front of `<upstream-cmd>`. Intercepts `tools/call` responses and redacts PII before they reach the model. Usually invoked by the harness, not directly. |
 | `gate uninstall` | Remove the hook, config directory, and gate-generated opencode plugins (with confirmation) |
 | `gate enable` | Enable PII redaction (sets `enabled: true` in config) |
 | `gate disable` | Disable PII redaction (sets `enabled: false` in config) |
-| `gate config [--init-only]` | Create and edit the config file. `--init-only` creates `~/.config/gate/config.yaml` without opening the editor — useful in scripts. |
+| `gate config [--path] [--print] [--init-only]` | Create and edit the config file. `--path` prints the resolved config path and exits. `--print` prints the raw config contents and exits. `--init-only` creates `~/.config/gate/config.yaml` without opening the editor — useful in scripts. |
 | `gate list` | Show configured tools and their SQL flags |
 | `gate validate` | Check config for errors and warnings |
 | `gate version` | Print version |
-| `gate scan [--verbose]` | Pipe schema query output (`SELECT TABLE_NAME, COLUMN_NAME ...`) into this to get a PII risk report across all tables. `--verbose` shows all detected columns without truncation. Exits 1 if any PII columns are found — scriptable in CI audits. |
+| `gate scan [--verbose] [--json]` | Pipe schema query output (`SELECT TABLE_NAME, COLUMN_NAME ...`) into this to get a PII risk report across all tables. `--verbose` shows all detected columns without truncation. `--json` emits results as machine-readable JSON instead of the human-readable report. Exits 1 if any PII columns are found — scriptable in CI audits. |
 | `gate run [--verbose] [-- <cmd>]` | Run a command through the redaction pipeline, or pipe JSON from stdin for direct Gate 2 inspection. Normally invoked by the hook; run manually to test. `--verbose` prints each field's Gate 2 decision to stderr. |
 | `gate hook` | *(internal)* Hook entry point — invoked by the harness, not directly |
 

@@ -119,7 +119,7 @@ Ask Claude:
 
 > Use the `postgres-local` MCP tool to run `SELECT id, full_name, email, status FROM users`
 
-The AI sees raw PII — `full_name` and `email` are unredacted. This is the flow gate's MCP proxy mode (planned) would protect.
+The AI sees raw PII — `full_name` and `email` are unredacted. To protect this path, register the server through `gate mcp` (see `gate init --mcp` or `gate init --wrap-mcp` in the main README).
 
 ### Override connection settings
 
