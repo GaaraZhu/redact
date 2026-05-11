@@ -138,7 +138,30 @@ If you have not yet created a config, run `gate config --init-only` first to gen
 
    Restart your opencode session after running `gate init` to load the plugin.
 
-4. *(Optional)* **Register MCP server proxies** for any MCP servers your agent uses:
+4. *(Optional)* **Register MCP server proxies** for any MCP servers your agent uses.
+
+   If you already have MCP servers configured, wrap them all at once with `--wrap-mcp` (dry-run by default; add `--yes` to apply):
+
+   ```bash
+   # Claude Code — wrap all servers in ~/.claude.json (dry-run)
+   gate init --wrap-mcp
+
+   # Claude Code — wrap all servers in ./.mcp.json (dry-run)
+   gate init --scope project --wrap-mcp
+
+   # Wrap only specific servers
+   gate init --wrap-mcp --servers postgres,github
+
+   # Apply
+   gate init --wrap-mcp --yes
+   gate init --wrap-mcp --servers postgres,github --yes
+   gate init --scope project --wrap-mcp --yes
+
+   # OpenCode
+   gate init --harness opencode --wrap-mcp --yes
+   ```
+
+   Or register a single server manually:
 
    ```bash
    # Claude Code — user-level (applies to all projects, written to ~/.claude.json)
@@ -151,7 +174,7 @@ If you have not yet created a config, run `gate config --init-only` first to gen
    gate init --harness opencode --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
    ```
 
-   This registers `gate mcp` as a transparent proxy in front of each MCP server so tool results are redacted before reaching the model.
+   Both approaches register `gate mcp` as a transparent proxy in front of each MCP server so tool results are redacted before reaching the model.
 
 4. **Start your AI session** — `gate` intercepts query commands automatically. No changes to your prompts or tools required.
 
@@ -207,16 +230,24 @@ AI calls MCP server (tools/call)
          {"content": [{"type": "text", "text": "{\"email\": \"[PII:email]\"}"}], "_gate_summary": {...}}
 ```
 
-Register a proxy for an MCP server:
+Register a proxy for an MCP server. If you already have servers configured, `--wrap-mcp` converts them all at once:
 
 ```bash
-# Claude Code — user-level (~/.claude.json, applies to all projects)
+# Convert all existing servers (dry-run shows what would change)
+gate init --wrap-mcp
+gate init --scope project --wrap-mcp          # project-level ./.mcp.json
+gate init --harness opencode --wrap-mcp
+
+# Convert only specific servers
+gate init --wrap-mcp --servers postgres,github
+
+# Apply
+gate init --wrap-mcp --yes
+gate init --wrap-mcp --servers postgres,github --yes
+
+# Or register a single server manually
 gate init --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
-
-# Claude Code — project-level (./.mcp.json, applies to this project only)
 gate init --scope project --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
-
-# OpenCode
 gate init --harness opencode --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
 ```
 
@@ -393,7 +424,8 @@ mcp:
 | Command | Purpose |
 |---|---|
 | `gate init [--harness claude-code\|opencode] [--scope global\|project]` | Register the hook in the agent harness. `claude-code` (default) writes `~/.claude/settings.json`; `opencode` writes a TypeScript plugin at the chosen scope. |
-| `gate init --mcp <name> --mcp-cmd <cmd>` | Register a `gate mcp` proxy for an MCP server. For `claude-code`: `--scope user` (default) writes to `~/.claude.json`; `--scope project` writes to `./.mcp.json`. For `opencode`: uses the opencode config at the chosen scope. |
+| `gate init --wrap-mcp [--servers a,b] [--yes]` | Convert existing MCP servers to `gate mcp` proxies. Dry-run by default; `--yes` to apply. `--servers` limits to a comma-separated list; omit to wrap all. Already-proxied servers are skipped. Respects `--harness` and `--scope`. |
+| `gate init --mcp <name> --mcp-cmd <cmd>` | Register a single `gate mcp` proxy. For `claude-code`: `--scope user` (default) writes to `~/.claude.json`; `--scope project` writes to `./.mcp.json`. |
 | `gate mcp [--] <upstream-cmd> [args...]` | Run a stdio MCP proxy in front of `<upstream-cmd>`. Intercepts `tools/call` responses and redacts PII before they reach the model. Usually invoked by the harness, not directly. |
 | `gate uninstall` | Remove the hook, config directory, and gate-generated opencode plugins (with confirmation) |
 | `gate enable` | Enable PII redaction (sets `enabled: true` in config) |

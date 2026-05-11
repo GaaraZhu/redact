@@ -43,7 +43,7 @@ enum Commands {
         /// Target harness: claude-code (default) or opencode
         #[arg(long, default_value = "claude-code")]
         harness: String,
-        /// Installation scope for opencode: global (default) or project
+        /// Installation scope: global/user (default) or project
         #[arg(long, default_value = "global")]
         scope: String,
         /// Name of the MCP server to register (e.g. "postgres")
@@ -52,6 +52,15 @@ enum Commands {
         /// Upstream MCP server command string (used with --mcp), e.g. "uvx mcp-server-postgres"
         #[arg(long = "mcp-cmd")]
         mcp_cmd: Option<String>,
+        /// Convert all existing MCP servers in the harness config to gate mcp proxies (dry-run by default)
+        #[arg(long = "wrap-mcp")]
+        wrap_mcp: bool,
+        /// Comma-separated list of server names to wrap (used with --wrap-mcp; default wraps all)
+        #[arg(long)]
+        servers: Option<String>,
+        /// Apply changes (used with --wrap-mcp; default is dry-run)
+        #[arg(long)]
+        yes: bool,
     },
     /// Manage the gate config file
     Config {
@@ -107,7 +116,18 @@ fn main() {
             scope,
             mcp,
             mcp_cmd,
-        } => init::run(&harness, &scope, mcp.as_deref(), mcp_cmd.as_deref()),
+            wrap_mcp,
+            servers,
+            yes,
+        } => init::run(
+            &harness,
+            &scope,
+            mcp.as_deref(),
+            mcp_cmd.as_deref(),
+            wrap_mcp,
+            servers.as_deref(),
+            yes,
+        ),
         Commands::Config {
             path,
             print,

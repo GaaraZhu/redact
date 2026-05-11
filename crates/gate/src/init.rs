@@ -5,12 +5,54 @@ use std::path::{Path, PathBuf};
 
 const HOOK_COMMAND: &str = "gate hook";
 
-pub fn run(harness: &str, scope: &str, mcp: Option<&str>, mcp_cmd: Option<&str>) {
+pub fn run(
+    harness: &str,
+    scope: &str,
+    mcp: Option<&str>,
+    mcp_cmd: Option<&str>,
+    wrap_mcp: bool,
+    servers: Option<&str>,
+    yes: bool,
+) {
     if is_agent_harness() {
         exit_with_error(
             "gate init is not available inside an agent harness. \
              Run `gate init` in a terminal session outside the agent.",
         );
+    }
+
+    if mcp.is_some() && wrap_mcp {
+        exit_with_error("--mcp and --wrap-mcp cannot be used together");
+    }
+
+    if servers.is_some() && !wrap_mcp {
+        exit_with_error("--servers requires --wrap-mcp");
+    }
+
+    let filter = parse_servers_filter(servers);
+
+    if wrap_mcp {
+        match harness {
+            "claude-code" => {
+                let path = match claude_code_mcp_path(scope) {
+                    Ok(p) => p,
+                    Err(e) => exit_with_error(&e),
+                };
+                wrap_mcp_claude(&path, filter.as_deref(), yes);
+            }
+            "opencode" => {
+                let path = match opencode_config_path() {
+                    Ok(p) => p,
+                    Err(e) => exit_with_error(&format!("cannot resolve settings path: {e}")),
+                };
+                wrap_mcp_opencode(&path, filter.as_deref(), yes);
+            }
+            _ => exit_with_error(&format!(
+                "--wrap-mcp is only supported for claude-code and opencode harnesses \
+                 (got '{harness}')"
+            )),
+        }
+        return;
     }
 
     if let Some(server_name) = mcp {
@@ -312,6 +354,234 @@ fn register_mcp_server_opencode(path: &Path, server_name: &str, cmd_str: &str) {
         upstream_parts.join(" ")
     );
     println!("Run `gate mcp -- {cmd_str}` to test the proxy manually.");
+}
+
+/// Parse a comma-separated `--servers` value into a sorted, deduplicated list.
+/// Returns `None` if `raw` is `None` (meaning "wrap all").
+fn parse_servers_filter(raw: Option<&str>) -> Option<Vec<String>> {
+    raw.map(|s| {
+        let mut names: Vec<String> = s
+            .split(',')
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    })
+}
+
+/// Returns true if an MCP server entry is already proxied through `gate mcp`.
+fn is_gate_mcp_proxy(entry: &Value) -> bool {
+    entry.get("command").and_then(|c| c.as_str()) == Some("gate")
+        && entry
+            .get("args")
+            .and_then(|a| a.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            == Some("mcp")
+}
+
+/// Convert existing MCP servers in a claude-code config (mcpServers key) to gate proxies.
+fn wrap_mcp_claude(path: &Path, filter: Option<&[String]>, apply: bool) {
+    let settings = read_settings(path);
+
+    let Some(servers) = settings.get("mcpServers").and_then(|v| v.as_object()) else {
+        println!("No MCP servers found in {}.", path.display());
+        return;
+    };
+
+    // (name, upstream_cmd, upstream_args)
+    let mut to_wrap: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut already_proxied: Vec<String> = Vec::new();
+
+    for (name, entry) in servers {
+        if let Some(f) = filter {
+            if !f.contains(name) {
+                continue;
+            }
+        }
+        if is_gate_mcp_proxy(entry) {
+            already_proxied.push(name.clone());
+            continue;
+        }
+        let Some(cmd) = entry.get("command").and_then(|c| c.as_str()) else {
+            continue;
+        };
+        let args: Vec<String> = entry
+            .get("args")
+            .and_then(|a| a.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        to_wrap.push((name.clone(), cmd.to_string(), args));
+    }
+
+    warn_unknown_servers(filter, servers.keys().map(String::as_str));
+    print_wrap_plan(&to_wrap, &already_proxied, path, apply);
+
+    if !apply || to_wrap.is_empty() {
+        return;
+    }
+
+    let mut updated = settings.clone();
+    for (name, cmd, args) in &to_wrap {
+        let new_args: Vec<Value> = std::iter::once(json!("mcp"))
+            .chain(std::iter::once(json!("--")))
+            .chain(std::iter::once(json!(cmd)))
+            .chain(args.iter().map(|s| json!(s)))
+            .collect();
+        if let Some(entry) = updated["mcpServers"][name.as_str()].as_object_mut() {
+            entry.insert("command".to_string(), json!("gate"));
+            entry.insert("args".to_string(), Value::Array(new_args));
+        }
+    }
+    write_atomic(path, &updated)
+        .unwrap_or_else(|e| exit_with_error(&format!("failed to write {}: {e}", path.display())));
+}
+
+/// Convert existing MCP servers in an opencode config (mcp.servers key) to gate proxies.
+fn wrap_mcp_opencode(path: &Path, filter: Option<&[String]>, apply: bool) {
+    let settings = if path.exists() {
+        let content = std::fs::read_to_string(path).unwrap_or_else(|e| {
+            exit_with_error(&format!("failed to read {}: {e}", path.display()))
+        });
+        serde_json::from_str::<Value>(&content).unwrap_or_else(|e| {
+            exit_with_error(&format!("failed to parse {}: {e}", path.display()))
+        })
+    } else {
+        json!({})
+    };
+
+    let Some(servers) = settings
+        .get("mcp")
+        .and_then(|m| m.get("servers"))
+        .and_then(|v| v.as_object())
+    else {
+        println!("No MCP servers found in {}.", path.display());
+        return;
+    };
+
+    let mut to_wrap: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut already_proxied: Vec<String> = Vec::new();
+
+    for (name, entry) in servers {
+        if let Some(f) = filter {
+            if !f.contains(name) {
+                continue;
+            }
+        }
+        if is_gate_mcp_proxy(entry) {
+            already_proxied.push(name.clone());
+            continue;
+        }
+        let Some(cmd) = entry.get("command").and_then(|c| c.as_str()) else {
+            continue;
+        };
+        let args: Vec<String> = entry
+            .get("args")
+            .and_then(|a| a.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        to_wrap.push((name.clone(), cmd.to_string(), args));
+    }
+
+    warn_unknown_servers(filter, servers.keys().map(String::as_str));
+    print_wrap_plan(&to_wrap, &already_proxied, path, apply);
+
+    if !apply || to_wrap.is_empty() {
+        return;
+    }
+
+    let mut updated = settings.clone();
+    for (name, cmd, args) in &to_wrap {
+        let new_args: Vec<Value> = std::iter::once(json!("mcp"))
+            .chain(std::iter::once(json!("--")))
+            .chain(std::iter::once(json!(cmd)))
+            .chain(args.iter().map(|s| json!(s)))
+            .collect();
+        if let Some(entry) = updated["mcp"]["servers"][name.as_str()].as_object_mut() {
+            entry.insert("command".to_string(), json!("gate"));
+            entry.insert("args".to_string(), Value::Array(new_args));
+        }
+    }
+    write_atomic(path, &updated)
+        .unwrap_or_else(|e| exit_with_error(&format!("failed to write {}: {e}", path.display())));
+}
+
+/// Warn about any names in `filter` that do not appear in `known`.
+fn warn_unknown_servers<'a>(filter: Option<&[String]>, known: impl Iterator<Item = &'a str>) {
+    let Some(f) = filter else { return };
+    let known_set: std::collections::HashSet<&str> = known.collect();
+    let unknown: Vec<&str> = f
+        .iter()
+        .filter(|n| !known_set.contains(n.as_str()))
+        .map(String::as_str)
+        .collect();
+    for name in unknown {
+        eprintln!("warning: server '{name}' not found in config");
+    }
+}
+
+fn print_wrap_plan(
+    to_wrap: &[(String, String, Vec<String>)],
+    already_proxied: &[String],
+    path: &Path,
+    apply: bool,
+) {
+    if to_wrap.is_empty() {
+        if already_proxied.is_empty() {
+            println!("No MCP servers found in {}.", path.display());
+        } else {
+            println!(
+                "All MCP servers in {} are already proxied through gate.",
+                path.display()
+            );
+        }
+        return;
+    }
+
+    let total = to_wrap.len() + already_proxied.len();
+    let verb = if apply { "Converted" } else { "Would convert" };
+    println!(
+        "{} {} of {} MCP server{} in {}:\n",
+        verb,
+        to_wrap.len(),
+        total,
+        if total == 1 { "" } else { "s" },
+        path.display()
+    );
+
+    for (name, cmd, args) in to_wrap {
+        let before = if args.is_empty() {
+            cmd.clone()
+        } else {
+            format!("{} {}", cmd, args.join(" "))
+        };
+        let after_parts: Vec<&str> = std::iter::once("gate mcp --")
+            .chain(std::iter::once(cmd.as_str()))
+            .chain(args.iter().map(String::as_str))
+            .collect();
+        println!("  {}: {} → {}", name, before, after_parts.join(" "));
+    }
+
+    if !already_proxied.is_empty() {
+        println!(
+            "\n  (already proxied, skipped: {})",
+            already_proxied.join(", ")
+        );
+    }
+
+    if !apply {
+        println!("\nRun with --yes to apply.");
+    }
 }
 
 #[cfg(test)]
@@ -616,5 +886,201 @@ mod tests {
         assert!(!is_gate_hook_variant("gate run -- tkpsql"));
         assert!(!is_gate_hook_variant("some-tool run"));
         assert!(!is_gate_hook_variant(""));
+    }
+
+    // is_gate_mcp_proxy
+
+    #[test]
+    fn proxy_detected_when_command_is_gate_and_first_arg_is_mcp() {
+        let entry = json!({"command": "gate", "args": ["mcp", "--", "uvx", "mcp-server-postgres"]});
+        assert!(is_gate_mcp_proxy(&entry));
+    }
+
+    #[test]
+    fn proxy_not_detected_for_non_gate_command() {
+        let entry = json!({"command": "uvx", "args": ["mcp-server-postgres"]});
+        assert!(!is_gate_mcp_proxy(&entry));
+    }
+
+    #[test]
+    fn proxy_not_detected_when_gate_but_no_mcp_arg() {
+        let entry = json!({"command": "gate", "args": ["run", "--", "uvx"]});
+        assert!(!is_gate_mcp_proxy(&entry));
+    }
+
+    // wrap_mcp_claude — dry-run
+
+    #[test]
+    fn wrap_mcp_claude_dry_run_does_not_modify_file() {
+        let (_dir, path) = tmp_path();
+        let initial = json!({
+            "mcpServers": {
+                "postgres": {"command": "uvx", "args": ["mcp-server-postgres"], "env": {}}
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        wrap_mcp_claude(&path, None, false);
+        let on_disk: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(on_disk["mcpServers"]["postgres"]["command"], "uvx");
+    }
+
+    #[test]
+    fn wrap_mcp_claude_apply_rewrites_command_and_args() {
+        let (_dir, path) = tmp_path();
+        let initial = json!({
+            "mcpServers": {
+                "postgres": {"command": "uvx", "args": ["mcp-server-postgres", "--db", "mydb"], "env": {}}
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        wrap_mcp_claude(&path, None, true);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["postgres"]["command"], "gate");
+        let args = v["mcpServers"]["postgres"]["args"].as_array().unwrap();
+        assert_eq!(args[0], "mcp");
+        assert_eq!(args[1], "--");
+        assert_eq!(args[2], "uvx");
+        assert_eq!(args[3], "mcp-server-postgres");
+        assert_eq!(args[4], "--db");
+        assert_eq!(args[5], "mydb");
+    }
+
+    #[test]
+    fn wrap_mcp_claude_apply_preserves_other_fields() {
+        let (_dir, path) = tmp_path();
+        let initial = json!({
+            "mcpServers": {
+                "pg": {"command": "uvx", "args": ["mcp-server-postgres"], "env": {"DB": "prod"}}
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        wrap_mcp_claude(&path, None, true);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["pg"]["env"]["DB"], "prod");
+    }
+
+    #[test]
+    fn wrap_mcp_claude_apply_skips_already_proxied() {
+        let (_dir, path) = tmp_path();
+        let initial = json!({
+            "mcpServers": {
+                "already": {"command": "gate", "args": ["mcp", "--", "uvx", "mcp-server-x"]},
+                "new":     {"command": "uvx", "args": ["mcp-server-y"]}
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        wrap_mcp_claude(&path, None, true);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // already-proxied entry unchanged
+        assert_eq!(v["mcpServers"]["already"]["args"][2], "uvx");
+        // new entry converted
+        assert_eq!(v["mcpServers"]["new"]["command"], "gate");
+    }
+
+    #[test]
+    fn wrap_mcp_claude_apply_no_op_when_all_proxied() {
+        let (_dir, path) = tmp_path();
+        let initial = json!({
+            "mcpServers": {
+                "pg": {"command": "gate", "args": ["mcp", "--", "uvx", "mcp-server-postgres"]}
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+        wrap_mcp_claude(&path, None, true);
+        // file must be untouched (no write_atomic called)
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    }
+
+    // wrap_mcp_opencode — apply
+
+    #[test]
+    fn wrap_mcp_opencode_apply_rewrites_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.json");
+        let initial = json!({
+            "theme": "dark",
+            "mcp": {
+                "servers": {
+                    "github": {"command": "npx", "args": ["@mcp/github"]},
+                    "proxied": {"command": "gate", "args": ["mcp", "--", "uvx", "mcp-server-x"]}
+                }
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        wrap_mcp_opencode(&path, None, true);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["theme"], "dark");
+        assert_eq!(v["mcp"]["servers"]["github"]["command"], "gate");
+        let args = v["mcp"]["servers"]["github"]["args"].as_array().unwrap();
+        assert_eq!(args[0], "mcp");
+        assert_eq!(args[1], "--");
+        assert_eq!(args[2], "npx");
+        // already-proxied entry unchanged
+        assert_eq!(v["mcp"]["servers"]["proxied"]["args"][2], "uvx");
+    }
+
+    // parse_servers_filter
+
+    #[test]
+    fn parse_servers_filter_none_returns_none() {
+        assert!(parse_servers_filter(None).is_none());
+    }
+
+    #[test]
+    fn parse_servers_filter_splits_and_trims() {
+        let f = parse_servers_filter(Some("postgres, github , stripe")).unwrap();
+        assert_eq!(f, vec!["github", "postgres", "stripe"]); // sorted
+    }
+
+    #[test]
+    fn parse_servers_filter_deduplicates() {
+        let f = parse_servers_filter(Some("postgres,postgres")).unwrap();
+        assert_eq!(f, vec!["postgres"]);
+    }
+
+    #[test]
+    fn parse_servers_filter_ignores_empty_segments() {
+        let f = parse_servers_filter(Some(",postgres,,")).unwrap();
+        assert_eq!(f, vec!["postgres"]);
+    }
+
+    // --servers filter applied to wrap_mcp_claude
+
+    #[test]
+    fn wrap_mcp_claude_filter_only_wraps_named_servers() {
+        let (_dir, path) = tmp_path();
+        let initial = json!({
+            "mcpServers": {
+                "postgres": {"command": "uvx", "args": ["mcp-server-postgres"]},
+                "github":   {"command": "npx", "args": ["@mcp/github"]},
+                "stripe":   {"command": "npx", "args": ["@mcp/stripe"]}
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        let filter = parse_servers_filter(Some("postgres,github"));
+        wrap_mcp_claude(&path, filter.as_deref(), true);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["postgres"]["command"], "gate");
+        assert_eq!(v["mcpServers"]["github"]["command"], "gate");
+        // stripe excluded from filter — must remain unchanged
+        assert_eq!(v["mcpServers"]["stripe"]["command"], "npx");
+    }
+
+    #[test]
+    fn wrap_mcp_claude_filter_dry_run_leaves_file_unchanged() {
+        let (_dir, path) = tmp_path();
+        let initial = json!({
+            "mcpServers": {
+                "postgres": {"command": "uvx", "args": ["mcp-server-postgres"]},
+                "github":   {"command": "npx", "args": ["@mcp/github"]}
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+        let filter = parse_servers_filter(Some("postgres"));
+        wrap_mcp_claude(&path, filter.as_deref(), false);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
     }
 }
