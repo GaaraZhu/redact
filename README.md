@@ -17,9 +17,7 @@
 
 AI agents increasingly access internal databases and APIs through CLI tools, scripts, and MCP servers. Without safeguards, sensitive data such as emails, phone numbers, tax identifiers, and payment details can be unintentionally exposed to LLM context windows.
 
-`gate` intercepts query results before they reach the model and automatically redacts detected PII fields without requiring changes to existing agent workflows or prompts.
-
-> **Note:** Currently, `gate` supports Bash-based tooling. MCP server interception support is planned.
+`gate` intercepts query results before they reach the model and automatically redacts detected PII fields without requiring changes to existing agent workflows or prompts. It covers both access paths agents use: **Bash commands** (via a harness hook) and **MCP server calls** (via a wrap-style stdio proxy).
 
 ## Demo
 
@@ -140,13 +138,29 @@ If you have not yet created a config, run `gate config --init-only` first to gen
 
    Restart your opencode session after running `gate init` to load the plugin.
 
+4. *(Optional)* **Register MCP server proxies** for any MCP servers your agent uses:
+
+   ```bash
+   # Claude Code
+   gate init --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
+
+   # OpenCode
+   gate init --harness opencode --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
+   ```
+
+   This registers `gate mcp` as a transparent proxy in front of each MCP server so tool results are redacted before reaching the model.
+
 4. **Start your AI session** — `gate` intercepts query commands automatically. No changes to your prompts or tools required.
 
 Run `gate validate` to confirm your config is valid before the first session.
 
 ## How it works
 
-`gate` currently covers the **Bash tooling** path: every Bash command the AI tries to run passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
+`gate` covers two access paths that agents use to reach data:
+
+### Bash tooling path
+
+Every Bash command the AI tries to run passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
 
 The rewrite is **enforcing** in both supported harnesses — the AI cannot bypass it:
 
@@ -169,6 +183,38 @@ AI asks to run: tkpsql query --sql "SELECT * FROM users"
                         │
          {"id": 1, "full_name": "[PII:name]", "email": "[PII:email]", "status": "active", ..., "_gate_summary": {...}}
 ```
+
+### MCP path
+
+For agents that call MCP servers directly, `gate mcp` acts as a transparent stdio proxy registered in the harness as the MCP server. It forwards all JSON-RPC traffic verbatim except for `tools/call` responses, which are passed through Gate 2 before reaching the model. No changes to the upstream MCP server are required.
+
+```
+AI calls MCP server (tools/call)
+                        │
+         gate mcp proxy (registered as the MCP server in the harness)
+                        │
+              forwards request verbatim to upstream MCP server
+                        │
+         upstream returns result.content[]
+                        │
+         ┌──────────────┴──────────────┐
+         │ Gate 2: Value scanning      │  redacts PII in text/JSON content items
+         └──────────────┬──────────────┘
+                        │
+         {"content": [{"type": "text", "text": "{\"email\": \"[PII:email]\"}"}], "_gate_summary": {...}}
+```
+
+Register a proxy for an MCP server:
+
+```bash
+# Claude Code
+gate init --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
+
+# OpenCode
+gate init --harness opencode --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
+```
+
+This writes an entry to the harness MCP config that routes `postgres` calls through `gate mcp -- uvx mcp-server-postgres`.
 
 **What the tool returns** (never reaches the model):
 ```json
@@ -326,6 +372,14 @@ pii:
   # hashes across runs; leave empty for zero-config determinism.
   hash_values: false
   hash_salt: ""
+
+# MCP proxy settings (gate mcp)
+mcp:
+  # Set to false to forward all MCP tool results without redaction (debug mode).
+  redact_tool_results: true
+  # Payloads larger than this (bytes) are forwarded unredacted with a stderr warning.
+  # Prevents OOM on very large file-content reads from MCP servers.
+  max_payload_bytes: 5242880  # 5 MiB
 ```
 
 ## Commands
@@ -333,6 +387,8 @@ pii:
 | Command | Purpose |
 |---|---|
 | `gate init [--harness claude-code\|opencode] [--scope global\|project]` | Register the hook in the agent harness. `claude-code` (default) writes `~/.claude/settings.json`; `opencode` writes a TypeScript plugin at the chosen scope. |
+| `gate init --mcp <name> --mcp-cmd <cmd>` | Register a `gate mcp` proxy for an MCP server in the harness config (supports `--harness claude-code\|opencode`). |
+| `gate mcp [--] <upstream-cmd> [args...]` | Run a stdio MCP proxy in front of `<upstream-cmd>`. Intercepts `tools/call` responses and redacts PII before they reach the model. Usually invoked by the harness, not directly. |
 | `gate uninstall` | Remove the hook, config directory, and gate-generated opencode plugins (with confirmation) |
 | `gate enable` | Enable PII redaction (sets `enabled: true` in config) |
 | `gate disable` | Disable PII redaction (sets `enabled: false` in config) |
@@ -436,8 +492,6 @@ Raise `confidence_threshold` (e.g. to `0.9`) to reduce over-redaction, or narrow
 Gate 1 can't infer column types from a wildcard query, so every value is passed to Gate 2's regex scanner. Use an explicit column list (`SELECT id, status, created_at FROM users`) to skip the warning and avoid scanning non-PII columns.
 
 ## Roadmap
-
-**MCP server interception** — gate currently covers the Bash tooling path (CLI commands the AI runs via the shell). The other common access pattern is MCP: the AI calls a Model Context Protocol server directly, bypassing the shell entirely. MCP support will bring the same two-gate redaction pipeline to MCP tool responses, with no changes required to the MCP server itself.
 
 **GitHub Copilot CLI** — deferred to a future release. Copilot CLI's `preToolUse` hook only supports deny-with-suggestion (no transparent rewrite), which makes the integration *advisory* — strictly safer than no hook, but the AI could in principle ignore the suggested rewrite. We're holding the integration until either Copilot CLI gains an `updatedInput` equivalent or the user demand justifies shipping the advisory-only mode.
 

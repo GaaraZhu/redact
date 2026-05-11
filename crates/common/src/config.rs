@@ -12,6 +12,8 @@ pub struct Config {
     pub tools: HashMap<String, ToolConfig>,
     #[serde(default)]
     pub pii: PiiConfig,
+    #[serde(default)]
+    pub mcp: McpConfig,
 }
 
 impl Default for Config {
@@ -20,8 +22,33 @@ impl Default for Config {
             enabled: true,
             tools: HashMap::new(),
             pii: PiiConfig::default(),
+            mcp: McpConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct McpConfig {
+    /// When false, `gate mcp` forwards all tool results without redaction (debug mode).
+    #[serde(default = "default_true")]
+    pub redact_tool_results: bool,
+    /// Payloads larger than this (bytes) are forwarded unredacted with a stderr warning.
+    /// Default: 5 MiB. Prevents OOM on very large file-content reads.
+    #[serde(default = "default_max_payload_bytes")]
+    pub max_payload_bytes: usize,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            redact_tool_results: true,
+            max_payload_bytes: default_max_payload_bytes(),
+        }
+    }
+}
+
+fn default_max_payload_bytes() -> usize {
+    5 * 1024 * 1024
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -335,5 +362,28 @@ pii:
     fn pipe_defaults_to_none() {
         let config = load_from_yaml("tools:\n  psql:\n    sql_arg: \"-c\"\n").unwrap();
         assert!(config.tools["psql"].pipe.is_none());
+    }
+
+    #[test]
+    fn mcp_defaults_when_absent() {
+        let config = load_missing().unwrap();
+        assert!(config.mcp.redact_tool_results);
+        assert_eq!(config.mcp.max_payload_bytes, 5 * 1024 * 1024);
+    }
+
+    #[test]
+    fn mcp_parses_from_yaml() {
+        let config =
+            load_from_yaml("mcp:\n  redact_tool_results: false\n  max_payload_bytes: 1048576\n")
+                .unwrap();
+        assert!(!config.mcp.redact_tool_results);
+        assert_eq!(config.mcp.max_payload_bytes, 1_048_576);
+    }
+
+    #[test]
+    fn mcp_partial_yaml_fills_defaults() {
+        let config = load_from_yaml("mcp:\n  redact_tool_results: false\n").unwrap();
+        assert!(!config.mcp.redact_tool_results);
+        assert_eq!(config.mcp.max_payload_bytes, 5 * 1024 * 1024);
     }
 }

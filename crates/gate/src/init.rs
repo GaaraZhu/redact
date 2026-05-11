@@ -28,8 +28,16 @@ pub fn run(harness: &str, scope: &str, mcp: Option<&str>, mcp_cmd: Option<&str>)
                 };
                 register_mcp_server(&path, server_name, cmd_str);
             }
+            "opencode" => {
+                let path = match opencode_config_path() {
+                    Ok(p) => p,
+                    Err(e) => exit_with_error(&format!("cannot resolve settings path: {e}")),
+                };
+                register_mcp_server_opencode(&path, server_name, cmd_str);
+            }
             _ => exit_with_error(&format!(
-                "MCP registration is only supported for claude-code harness (got '{harness}')"
+                "MCP registration is only supported for claude-code and opencode harnesses \
+                 (got '{harness}')"
             )),
         }
         return;
@@ -241,6 +249,60 @@ fn claude_settings_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".claude/settings.json"))
 }
 
+fn opencode_config_path() -> Result<PathBuf, String> {
+    let home =
+        std::env::var("HOME").map_err(|_| "HOME environment variable not set".to_string())?;
+    Ok(PathBuf::from(home).join(".config/opencode/opencode.json"))
+}
+
+fn register_mcp_server_opencode(path: &Path, server_name: &str, cmd_str: &str) {
+    let upstream_parts = match shell_words::split(cmd_str) {
+        Ok(parts) if !parts.is_empty() => parts,
+        Ok(_) => exit_with_error("--mcp-cmd must not be empty"),
+        Err(e) => exit_with_error(&format!("invalid --mcp-cmd: {e}")),
+    };
+
+    let mut args: Vec<Value> = vec![json!("mcp"), json!("--")];
+    args.extend(upstream_parts.iter().map(|s| json!(s)));
+
+    let server_entry = json!({
+        "command": "gate",
+        "args": args,
+    });
+
+    let mut config = if path.exists() {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => exit_with_error(&format!("failed to read {}: {e}", path.display())),
+        };
+        match serde_json::from_str::<Value>(&content) {
+            Ok(v) => v,
+            Err(e) => exit_with_error(&format!("failed to parse {}: {e}", path.display())),
+        }
+    } else {
+        json!({})
+    };
+
+    // Ensure config["mcp"]["servers"] is an object.
+    if !config.get("mcp").is_some_and(|v| v.is_object()) {
+        config["mcp"] = json!({});
+    }
+    if !config["mcp"].get("servers").is_some_and(|v| v.is_object()) {
+        config["mcp"]["servers"] = json!({});
+    }
+    config["mcp"]["servers"][server_name] = server_entry;
+
+    write_atomic(path, &config)
+        .unwrap_or_else(|e| exit_with_error(&format!("failed to write {}: {e}", path.display())));
+    println!(
+        "MCP server '{}' registered in {} (command: gate mcp -- {})",
+        server_name,
+        path.display(),
+        upstream_parts.join(" ")
+    );
+    println!("Run `gate mcp -- {cmd_str}` to test the proxy manually.");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +451,82 @@ mod tests {
         run_with_path(&path);
         let contents = std::fs::read_to_string(&path).unwrap();
         assert!(serde_json::from_str::<Value>(&contents).is_ok());
+    }
+
+    // register_mcp_server (claude-code)
+
+    #[test]
+    fn mcp_server_written_to_empty_settings() {
+        let (_dir, path) = tmp_path();
+        register_mcp_server(&path, "postgres", "uvx mcp-server-postgres");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["postgres"]["command"], "gate");
+        let args = v["mcpServers"]["postgres"]["args"].as_array().unwrap();
+        assert_eq!(args[0], "mcp");
+        assert_eq!(args[1], "--");
+        assert_eq!(args[2], "uvx");
+    }
+
+    #[test]
+    fn mcp_server_preserves_existing_entries() {
+        let (_dir, path) = tmp_path();
+        let initial = json!({"mcpServers": {"other": {"command": "other", "args": []}}});
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        register_mcp_server(&path, "postgres", "uvx mcp-server-postgres");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(v["mcpServers"]["other"].is_object());
+        assert!(v["mcpServers"]["postgres"].is_object());
+    }
+
+    #[test]
+    fn mcp_server_overwrites_existing_entry_with_same_name() {
+        let (_dir, path) = tmp_path();
+        register_mcp_server(&path, "postgres", "uvx mcp-server-postgres --old");
+        register_mcp_server(&path, "postgres", "uvx mcp-server-postgres --new");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let args = v["mcpServers"]["postgres"]["args"].as_array().unwrap();
+        assert!(args.iter().any(|a| a.as_str() == Some("--new")));
+    }
+
+    // register_mcp_server_opencode
+
+    #[test]
+    fn opencode_mcp_server_written_to_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.json");
+        register_mcp_server_opencode(&path, "postgres", "uvx mcp-server-postgres");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcp"]["servers"]["postgres"]["command"], "gate");
+        let args = v["mcp"]["servers"]["postgres"]["args"].as_array().unwrap();
+        assert_eq!(args[0], "mcp");
+        assert_eq!(args[1], "--");
+        assert_eq!(args[2], "uvx");
+    }
+
+    #[test]
+    fn opencode_mcp_server_merges_with_existing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.json");
+        let initial = json!({"theme": "dark", "mcp": {"servers": {"github": {"command": "gh"}}}});
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        register_mcp_server_opencode(&path, "postgres", "uvx mcp-server-postgres");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["theme"], "dark");
+        assert!(v["mcp"]["servers"]["github"].is_object());
+        assert!(v["mcp"]["servers"]["postgres"].is_object());
+    }
+
+    #[test]
+    fn opencode_mcp_server_multi_word_cmd_split_into_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.json");
+        register_mcp_server_opencode(&path, "pg", "uvx mcp-server-postgres --db mydb");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let args = v["mcp"]["servers"]["pg"]["args"].as_array().unwrap();
+        // mcp, --, uvx, mcp-server-postgres, --db, mydb
+        assert_eq!(args.len(), 6);
+        assert_eq!(args[4], "--db");
+        assert_eq!(args[5], "mydb");
     }
 
     // is_gate_hook_variant
