@@ -97,7 +97,7 @@ Add to your `~/.claude/settings.json` under `mcpServers`:
 ```json
 {
   "mcpServers": {
-    "postgres-gate": {
+    "postgres-local": {
       "command": "/absolute/path/to/gate/dev/.venv/bin/python",
       "args": ["/absolute/path/to/gate/dev/mcp_server.py"]
     }
@@ -117,7 +117,7 @@ Restart Claude Code. The server exposes three tools:
 
 Ask Claude:
 
-> Use the `postgres-gate` MCP tool to run `SELECT id, full_name, email, status FROM users`
+> Use the `postgres-local` MCP tool to run `SELECT id, full_name, email, status FROM users`
 
 The AI sees raw PII — `full_name` and `email` are unredacted. This is the flow gate's MCP proxy mode (planned) would protect.
 

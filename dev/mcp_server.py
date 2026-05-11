@@ -25,7 +25,7 @@ PG_DB   = os.environ.get("PG_DB",   "gate_demo")
 PG_USER = os.environ.get("PG_USER", "gate")
 PG_PASS = os.environ.get("PG_PASS", "gate")
 
-mcp = FastMCP("postgres-gate-demo")
+mcp = FastMCP("postgres-local-demo")
 
 
 def _connect():
