@@ -4,6 +4,10 @@
 # Claude Code local settings (use `gate init` to set up hooks)
 .claude/
 
+# Project-level MCP configs (use `gate init --wrap-mcp` to set up)
+.mcp.json
+opencode.json
+
 # Editor
 .idea/
 .vscode/

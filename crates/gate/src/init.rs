@@ -41,7 +41,7 @@ pub fn run(
                 wrap_mcp_claude(&path, filter.as_deref(), yes);
             }
             "opencode" => {
-                let path = match opencode_config_path() {
+                let path = match opencode_config_path(scope) {
                     Ok(p) => p,
                     Err(e) => exit_with_error(&format!("cannot resolve settings path: {e}")),
                 };
@@ -71,7 +71,7 @@ pub fn run(
                 register_mcp_server(&path, server_name, cmd_str);
             }
             "opencode" => {
-                let path = match opencode_config_path() {
+                let path = match opencode_config_path(scope) {
                     Ok(p) => p,
                     Err(e) => exit_with_error(&format!("cannot resolve settings path: {e}")),
                 };
@@ -302,7 +302,12 @@ fn claude_code_mcp_path(scope: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".claude.json"))
 }
 
-fn opencode_config_path() -> Result<PathBuf, String> {
+/// Resolve the opencode config path for the given scope.
+/// "project" → ./opencode.json; anything else ("user", "global") → ~/.config/opencode/opencode.json.
+fn opencode_config_path(scope: &str) -> Result<PathBuf, String> {
+    if scope == "project" {
+        return Ok(PathBuf::from("opencode.json"));
+    }
     let home =
         std::env::var("HOME").map_err(|_| "HOME environment variable not set".to_string())?;
     Ok(PathBuf::from(home).join(".config/opencode/opencode.json"))
@@ -315,12 +320,12 @@ fn register_mcp_server_opencode(path: &Path, server_name: &str, cmd_str: &str) {
         Err(e) => exit_with_error(&format!("invalid --mcp-cmd: {e}")),
     };
 
-    let mut args: Vec<Value> = vec![json!("mcp"), json!("--")];
-    args.extend(upstream_parts.iter().map(|s| json!(s)));
+    let mut command: Vec<Value> = vec![json!("gate"), json!("mcp"), json!("--")];
+    command.extend(upstream_parts.iter().map(|s| json!(s)));
 
     let server_entry = json!({
-        "command": "gate",
-        "args": args,
+        "type": "local",
+        "command": command,
     });
 
     let mut config = if path.exists() {
@@ -336,14 +341,10 @@ fn register_mcp_server_opencode(path: &Path, server_name: &str, cmd_str: &str) {
         json!({})
     };
 
-    // Ensure config["mcp"]["servers"] is an object.
     if !config.get("mcp").is_some_and(|v| v.is_object()) {
         config["mcp"] = json!({});
     }
-    if !config["mcp"].get("servers").is_some_and(|v| v.is_object()) {
-        config["mcp"]["servers"] = json!({});
-    }
-    config["mcp"]["servers"][server_name] = server_entry;
+    config["mcp"][server_name] = server_entry;
 
     write_atomic(path, &config)
         .unwrap_or_else(|e| exit_with_error(&format!("failed to write {}: {e}", path.display())));
@@ -372,14 +373,27 @@ fn parse_servers_filter(raw: Option<&str>) -> Option<Vec<String>> {
 }
 
 /// Returns true if an MCP server entry is already proxied through `gate mcp`.
+/// Handles both claude-code format { "command": "gate", "args": ["mcp", ...] }
+/// and opencode format { "command": ["gate", "mcp", ...] }.
 fn is_gate_mcp_proxy(entry: &Value) -> bool {
-    entry.get("command").and_then(|c| c.as_str()) == Some("gate")
+    let cmd = entry.get("command");
+    // claude-code: command is the string "gate", args[0] is "mcp"
+    let claude_format = cmd.and_then(|c| c.as_str()) == Some("gate")
         && entry
             .get("args")
             .and_then(|a| a.as_array())
             .and_then(|arr| arr.first())
             .and_then(|v| v.as_str())
-            == Some("mcp")
+            == Some("mcp");
+    // opencode: command is an array ["gate", "mcp", ...]
+    let opencode_format = cmd
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.first().and_then(|v| v.as_str()) == Some("gate")
+                && arr.get(1).and_then(|v| v.as_str()) == Some("mcp")
+        })
+        .unwrap_or(false);
+    claude_format || opencode_format
 }
 
 /// Convert existing MCP servers in a claude-code config (mcpServers key) to gate proxies.
@@ -456,11 +470,7 @@ fn wrap_mcp_opencode(path: &Path, filter: Option<&[String]>, apply: bool) {
         json!({})
     };
 
-    let Some(servers) = settings
-        .get("mcp")
-        .and_then(|m| m.get("servers"))
-        .and_then(|v| v.as_object())
-    else {
+    let Some(servers) = settings.get("mcp").and_then(|v| v.as_object()) else {
         println!("No MCP servers found in {}.", path.display());
         return;
     };
@@ -478,18 +488,17 @@ fn wrap_mcp_opencode(path: &Path, filter: Option<&[String]>, apply: bool) {
             already_proxied.push(name.clone());
             continue;
         }
-        let Some(cmd) = entry.get("command").and_then(|c| c.as_str()) else {
+        // opencode command format: array where [0] is the executable
+        let Some(command_arr) = entry.get("command").and_then(|c| c.as_array()) else {
             continue;
         };
-        let args: Vec<String> = entry
-            .get("args")
-            .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let Some(cmd) = command_arr.first().and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let args: Vec<String> = command_arr[1..]
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
         to_wrap.push((name.clone(), cmd.to_string(), args));
     }
 
@@ -502,14 +511,14 @@ fn wrap_mcp_opencode(path: &Path, filter: Option<&[String]>, apply: bool) {
 
     let mut updated = settings.clone();
     for (name, cmd, args) in &to_wrap {
-        let new_args: Vec<Value> = std::iter::once(json!("mcp"))
+        let new_command: Vec<Value> = std::iter::once(json!("gate"))
+            .chain(std::iter::once(json!("mcp")))
             .chain(std::iter::once(json!("--")))
             .chain(std::iter::once(json!(cmd)))
             .chain(args.iter().map(|s| json!(s)))
             .collect();
-        if let Some(entry) = updated["mcp"]["servers"][name.as_str()].as_object_mut() {
-            entry.insert("command".to_string(), json!("gate"));
-            entry.insert("args".to_string(), Value::Array(new_args));
+        if let Some(entry) = updated["mcp"][name.as_str()].as_object_mut() {
+            entry.insert("command".to_string(), Value::Array(new_command));
         }
     }
     write_atomic(path, &updated)
@@ -766,6 +775,44 @@ mod tests {
         assert_eq!(path, PathBuf::from(".mcp.json"));
     }
 
+    // opencode_config_path
+
+    #[test]
+    fn opencode_config_path_global_uses_home() {
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", "/test/home") };
+        let path = opencode_config_path("global").unwrap();
+        match saved {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        assert_eq!(
+            path,
+            PathBuf::from("/test/home/.config/opencode/opencode.json")
+        );
+    }
+
+    #[test]
+    fn opencode_config_path_user_uses_home() {
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", "/test/home") };
+        let path = opencode_config_path("user").unwrap();
+        match saved {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        assert_eq!(
+            path,
+            PathBuf::from("/test/home/.config/opencode/opencode.json")
+        );
+    }
+
+    #[test]
+    fn opencode_config_path_project_is_relative() {
+        let path = opencode_config_path("project").unwrap();
+        assert_eq!(path, PathBuf::from("opencode.json"));
+    }
+
     // register_mcp_server (claude-code, project scope → .mcp.json)
 
     #[test]
@@ -836,24 +883,26 @@ mod tests {
         let path = dir.path().join("opencode.json");
         register_mcp_server_opencode(&path, "postgres", "uvx mcp-server-postgres");
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(v["mcp"]["servers"]["postgres"]["command"], "gate");
-        let args = v["mcp"]["servers"]["postgres"]["args"].as_array().unwrap();
-        assert_eq!(args[0], "mcp");
-        assert_eq!(args[1], "--");
-        assert_eq!(args[2], "uvx");
+        assert_eq!(v["mcp"]["postgres"]["type"], "local");
+        let cmd = v["mcp"]["postgres"]["command"].as_array().unwrap();
+        assert_eq!(cmd[0], "gate");
+        assert_eq!(cmd[1], "mcp");
+        assert_eq!(cmd[2], "--");
+        assert_eq!(cmd[3], "uvx");
     }
 
     #[test]
     fn opencode_mcp_server_merges_with_existing_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("opencode.json");
-        let initial = json!({"theme": "dark", "mcp": {"servers": {"github": {"command": "gh"}}}});
+        let initial =
+            json!({"theme": "dark", "mcp": {"github": {"type": "local", "command": ["gh"]}}});
         std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
         register_mcp_server_opencode(&path, "postgres", "uvx mcp-server-postgres");
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(v["theme"], "dark");
-        assert!(v["mcp"]["servers"]["github"].is_object());
-        assert!(v["mcp"]["servers"]["postgres"].is_object());
+        assert!(v["mcp"]["github"].is_object());
+        assert!(v["mcp"]["postgres"].is_object());
     }
 
     #[test]
@@ -862,11 +911,11 @@ mod tests {
         let path = dir.path().join("opencode.json");
         register_mcp_server_opencode(&path, "pg", "uvx mcp-server-postgres --db mydb");
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        let args = v["mcp"]["servers"]["pg"]["args"].as_array().unwrap();
-        // mcp, --, uvx, mcp-server-postgres, --db, mydb
-        assert_eq!(args.len(), 6);
-        assert_eq!(args[4], "--db");
-        assert_eq!(args[5], "mydb");
+        let cmd = v["mcp"]["pg"]["command"].as_array().unwrap();
+        // gate, mcp, --, uvx, mcp-server-postgres, --db, mydb
+        assert_eq!(cmd.len(), 7);
+        assert_eq!(cmd[5], "--db");
+        assert_eq!(cmd[6], "mydb");
     }
 
     // is_gate_hook_variant
@@ -1002,23 +1051,22 @@ mod tests {
         let initial = json!({
             "theme": "dark",
             "mcp": {
-                "servers": {
-                    "github": {"command": "npx", "args": ["@mcp/github"]},
-                    "proxied": {"command": "gate", "args": ["mcp", "--", "uvx", "mcp-server-x"]}
-                }
+                "github": {"type": "local", "command": ["npx", "@mcp/github"]},
+                "proxied": {"type": "local", "command": ["gate", "mcp", "--", "uvx", "mcp-server-x"]}
             }
         });
         std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
         wrap_mcp_opencode(&path, None, true);
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(v["theme"], "dark");
-        assert_eq!(v["mcp"]["servers"]["github"]["command"], "gate");
-        let args = v["mcp"]["servers"]["github"]["args"].as_array().unwrap();
-        assert_eq!(args[0], "mcp");
-        assert_eq!(args[1], "--");
-        assert_eq!(args[2], "npx");
+        let cmd = v["mcp"]["github"]["command"].as_array().unwrap();
+        assert_eq!(cmd[0], "gate");
+        assert_eq!(cmd[1], "mcp");
+        assert_eq!(cmd[2], "--");
+        assert_eq!(cmd[3], "npx");
         // already-proxied entry unchanged
-        assert_eq!(v["mcp"]["servers"]["proxied"]["args"][2], "uvx");
+        let proxied_cmd = v["mcp"]["proxied"]["command"].as_array().unwrap();
+        assert_eq!(proxied_cmd[3], "uvx");
     }
 
     // parse_servers_filter
