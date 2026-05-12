@@ -325,6 +325,8 @@ PII in query results returned by configured tools.
 
 For a stronger boundary, combine gate with harness-level tool restrictions (e.g. limiting which Bash commands the agent is permitted to run) and database-level read-only roles.
 
+For a full description of the attacker model, detection gaps, and known bypasses, see [THREAT-MODEL.md](THREAT-MODEL.md).
+
 ## Documentation
 
 - [Configuration](docs/configuration.md) — full YAML schema and built-in PII detection rules
