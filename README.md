@@ -21,11 +21,17 @@ AI agents increasingly access internal databases and APIs through CLI tools, scr
 
 ## Demo
 
-The agent asked for all users in plain English; `gate` intercepted the query and returned all columns with `full_name` and `email` masked before they reached the model context.
+The agent asks for data in plain English; `gate` intercepts the results and returns all columns with PII fields like `full_name` and `email` masked before they reach the model context. Both integration paths are enforced — the AI cannot bypass them.
+
+**Bash tooling path** — Claude Code running `tkpsql`; `gate hook` rewrites the command and redacts the JSON output.
 
 ![gate blocking PII in a Claude Code session using tkpsql](assets/demo-claude-code.jpg)
 
-Also works with OpenCode and GitHub Copilot CLI — see the [full list of supported harnesses](#how-it-works).
+**MCP path** — GitHub Copilot CLI calling a PostgreSQL MCP server through `gate mcp`; the proxy redacts `tools/call` responses before they reach the model.
+
+![gate blocking PII via MCP in a Copilot CLI session](assets/demo-copilot.jpg)
+
+Also works with OpenCode — see [How it works](#how-it-works) for all supported harnesses.
 
 ## Scan your schema
 
@@ -280,66 +286,52 @@ See [Quickstart](#quickstart) step 4 for setup commands (`--wrap-mcp` to convert
 }
 ```
 
-## Config file locations
+## Output format
 
-### Hook settings
+Redacted output preserves the original JSON structure. PII values are replaced with `[PII:<type>]` placeholders. A `_gate_summary` field is appended reporting what was redacted. All other fields (including `count`, `rows`, etc.) are passed through from the underlying tool unchanged.
 
-| Harness | Global / user | Project |
-|---|---|---|
-| Claude Code | `~/.claude/settings.json` | `.claude/settings.json` |
-| OpenCode | `~/.config/opencode/opencode.json` | `./opencode.json` |
-| Copilot CLI | — (not supported) | `.github/hooks/PreToolUse.json` |
+```json
+{
+  "rows": [{"id": 1, "email": "[PII:email]", "ssn": "[PII:ssn]"}],
+  "count": 1,
+  "_gate_summary": {"redacted": 2, "types": ["email", "ssn"], "warnings": []}
+}
+```
 
-### MCP server config
+With `hash_values: true`, each placeholder gains an 8-char hex suffix derived from the original value. The same raw value always produces the same suffix, so the AI can join or deduplicate across rows without ever seeing the underlying data.
 
-| Harness | Global / user | Project |
-|---|---|---|
-| Claude Code | `~/.claude.json` | `./.mcp.json` |
-| OpenCode | `~/.config/opencode/opencode.json` | `./opencode.json` |
-| Copilot CLI | `~/.copilot/mcp-config.json` | `./.mcp.json` |
+```json
+{
+  "rows": [{"id": 1, "email": "[PII:email:7f83b165]", "ssn": "[PII:ssn:3c2a1b0e]"}],
+  "count": 1,
+  "_gate_summary": {"redacted": 2, "types": ["email", "ssn"], "warnings": []}
+}
+```
 
-OpenCode stores both hooks and MCP servers in the same file. Claude Code and Copilot CLI use separate files for each.
+Error responses from the underlying tool pass through unchanged.
 
-## Built-in PII detection
+## Security scope
 
-`gate` ships with two layers of built-in detection that require no configuration.
+`gate` intercepts the output of configured tools and redacts PII before it reaches the model context. It is not a sandbox — it only applies to commands explicitly listed under `tools:` in config. Commands outside that list pass through the harness unchanged.
 
-**Gate 1 — column-name inference from SQL.** When a `sql_arg` is configured, gate parses the SELECT list and marks any column whose name matches a PII pattern as a forced-redact target — even if the raw value would not trigger a regex.
+**What gate covers:**
 
-**Gate 2 — value scanning and column-name heuristics.** Every string field in the JSON output is evaluated against regex patterns and a column-name classifier. The classifier tokenises column names (handling `snake_case`, `camelCase`, `PascalCase`, and `UPPER_CASE`) so `userEmail`, `user_email`, and `USER_EMAIL` all resolve to the same detection rule.
+PII in query results returned by configured tools.
 
-### Column-name categories
+**What gate does not cover:**
+- Commands not listed in `tools:` — the AI can invoke them freely
+- Write operations (INSERT, UPDATE, DELETE) — gate does not inspect or block them
+- Credential exposure — gate holds no credentials; that is the responsibility of the underlying tool
 
-| Category | Detected columns (representative examples) |
-|---|---|
-| **Names** | `first_name`, `last_name`, `full_name`, `given_name`, `family_name`, `surname`, `preferred_name`, `middle_name`, `maiden_name`, `salutation`; `<entity>_name` where entity is one of: contact, customer, client, employee, patient, member, owner, recipient, sender, spouse, parent, guardian, manager, sibling, children |
-| **Demographics** | `gender`, `sex`, `nationality`, `citizenship` |
-| **Government IDs** | `passport`, `license` / `driver_license_number`, `ssn` / `social_security_number`, `national_id`, `tax_number` / `tax_id` / `ird_number`, `visa_number`, `resident_id`, `immigration_id` |
-| **Contact** | `email` / `email_address` / `mail`, `phone` / `phone_number` / `mobile`, `fax` |
-| **Date of birth** | `dob`, `birth`, `birthday`, `date_of_birth`, `birth_date`, `dateOfBirth` |
-| **Location of birth** | `birth_country`, `birth_place`, `birth_city`, `country_of_birth`, `place_of_birth`, `city_of_birth`, `state_of_birth` |
-| **Address & location** | `address` / `addr`, `street`, `city`, `state`, `province`, `country`, `postcode`, `zip`, `suburb`, `latitude`, `longitude`, `gps`, `coordinates` |
-| **Financial** | `bank_account`, `account_number`, `iban`, `swift`, `routing_number`, `bsb`, `credit_card` / `card_number`, `cvv` / `cvc`, `expiry` |
-| **Employment** | `salary`, `wage`, `job_title`, `employee_id`, `staff_id`, `student_id`, `manager_id`, and any `<entity>_id` / `<entity>_number` where entity is: employee, staff, student, member, client, customer, consumer, cust, crm, person, manager, user, device, session, cookie, advertising, external |
-| **Health & medical** | `medical`, `health`, `diagnosis`, `prescription`, `disability`, `vaccination`, `vaccine`, `npi` |
-| **Online & technical** | `username` / `user_name`, `ip_address`, `mac_address`, `auth_token`, `user_id`, `device_id`, `session_id`, `cookie_id`, `advertising_id` |
-| **Biometric** | `biometric`, `fingerprint`, `voiceprint`, `retina`, `face_scan` |
-| **Family & relationships** | `next_of_kin`, `emergency_contact`, `spouse_name`, `parent_name`, `guardian_name`, `children_names` |
+For a stronger boundary, combine gate with harness-level tool restrictions (e.g. limiting which Bash commands the agent is permitted to run) and database-level read-only roles.
 
-### Value-based patterns
+## Documentation
 
-| Pattern | Detection | Example values caught |
-|---|---|---|
-| Email address | Regex (confidence 0.95) | `alice@example.com`, `user+tag@company.co.uk` |
-| Social Security Number | Regex (confidence 0.90) | `123-45-6789` |
-| Phone number | Regex (confidence 0.70) | `+1 555-123-4567`, `(555) 123-4567`, `555.123.4567` |
-| Credit / debit card | Regex + [Luhn algorithm](https://en.wikipedia.org/wiki/Luhn_algorithm) (confidence 1.0) | `4111 1111 1111 1111`, `5500-0055-5555-5559` |
+- [Configuration](docs/configuration.md) — full YAML schema and built-in PII detection rules
+- [Config file locations](docs/config-locations.md) — where each harness stores hooks and MCP settings
+- [Troubleshooting](docs/troubleshooting.md) — common issues and fixes
 
-When a column name also matches the denylist, Gate 2 adds a 0.15 confidence boost to any value hit in that column, pushing borderline matches over the redaction threshold.
-
-Add your own columns or patterns in config — see [Configuration](#configuration) below.
-
-## Supported commands
+## Supported tools
 
 Any command that returns JSON can be configured as a `gate` target — database clients, internal API calls via `curl`, or any other tool your AI agent uses to fetch data. The AI sees the same structured response it always did, with PII values replaced in-place.
 
@@ -354,76 +346,6 @@ The `tk*` commands are managed by [toolkit](https://github.com/scott-abernethy/t
 | `mysql` | MySQL (direct) | `sql_arg: "-e"` |
 | `curl` | HTTP data sources | `pipe: "jq -c ."` — wraps output through jq so Gate 2 receives JSON |
 | Any JSON-returning command | — | Add it to `tools:` in config |
-
-## Configuration
-
-Config lives at `~/.config/gate/config.yaml` (override with `GATE_CONFIG`).
-
-```yaml
-# Set to false to disable all PII redaction (or use GATE_DISABLED=1 for a session).
-enabled: true
-
-# Tools whose Bash invocations are intercepted and piped through `gate run`.
-# Only tools listed here are intercepted; everything else passes through unchanged.
-tools:
-  tkpsql:
-    sql_arg: "--sql"   # Gate 1 parses this SQL to extract column names for targeted redaction
-  tkdbr:
-    sql_arg: "--sql"
-  tkmsql:
-    sql_arg: "--sql"
-  psql:
-    sql_arg: "-c"
-    extra_args: ["--csv"]   # injected automatically; switches psql to CSV output for the pipe
-    pipe: "python3 -c \"import sys,csv,json; r=csv.DictReader(sys.stdin); print(json.dumps(list(r)))\""
-  mysql:
-    sql_arg: "-e"
-  curl:
-    pipe: "jq -c ."   # wraps curl output through jq so Gate 2 always receives JSON
-
-pii:
-  action: redact          # redact | warn | reject
-  wildcard_policy: warn   # warn | reject — applies when the AI uses SELECT *
-
-  # Add column names beyond the built-in denylist (see Built-in PII detection above).
-  # column_names:
-  #   - secret_token
-  #   - api_key
-
-  # Override or add PII regex patterns.
-  # patterns:
-  #   internal_id:
-  #     regex: '\bEMP-\d{6}\b'
-  #     confidence: 0.85
-
-  # Added to a pattern's base confidence when the JSON key also matches the column denylist.
-  # Final score is capped at 1.0.
-  column_name_boost: 0.15
-
-  # Values matched below this threshold are flagged in _gate_summary but not redacted.
-  confidence_threshold: 0.8
-
-  # Redaction placeholder template; {type} is replaced with the pattern name.
-  redaction: "[PII:{type}]"
-
-  include_summary: true
-
-  # When true, redacted values include a deterministic 8-char hex suffix derived
-  # from the original value (e.g. [PII:email:7f83b165]).  The same raw value always
-  # produces the same suffix, so the AI can correlate records across rows without
-  # seeing the underlying data.  Set hash_salt to a fixed secret for consistent
-  # hashes across runs; leave empty for zero-config determinism.
-  hash_values: false
-  hash_salt: ""
-
-# MCP proxy settings (gate mcp)
-mcp:
-  # Set to false to forward all MCP tool results without redaction (debug mode).
-  redact_tool_results: true
-  # Payloads larger than this (bytes) are forwarded unredacted with a stderr warning.
-  # Prevents OOM on very large file-content reads from MCP servers.
-  max_payload_bytes: 5242880  # 5 MiB
-```
 
 ## Commands
 
@@ -453,45 +375,6 @@ unset GATE_DISABLED      # re-enable
 
 The env var takes precedence over the config file, so it works even when `enabled: true` is set.
 
-## Security scope
-
-`gate` intercepts the output of configured tools and redacts PII before it reaches the model context. It is not a sandbox — it only applies to commands explicitly listed under `tools:` in config. Commands outside that list pass through the harness unchanged.
-
-**What gate covers:**
-
-PII in query results returned by configured tools.
-
-**What gate does not cover:**
-- Commands not listed in `tools:` — the AI can invoke them freely
-- Write operations (INSERT, UPDATE, DELETE) — gate does not inspect or block them
-- Credential exposure — gate holds no credentials; that is the responsibility of the underlying tool
-
-For a stronger boundary, combine gate with harness-level tool restrictions (e.g. limiting which Bash commands the agent is permitted to run) and database-level read-only roles.
-
-## Output format
-
-Redacted output preserves the original JSON structure. PII values are replaced with `[PII:<type>]` placeholders. A `_gate_summary` field is appended reporting what was redacted. All other fields (including `count`, `rows`, etc.) are passed through from the underlying tool unchanged.
-
-```json
-{
-  "rows": [{"id": 1, "email": "[PII:email]", "ssn": "[PII:ssn]"}],
-  "count": 1,
-  "_gate_summary": {"redacted": 2, "types": ["email", "ssn"], "warnings": []}
-}
-```
-
-With `hash_values: true`, each placeholder gains an 8-char hex suffix derived from the original value. The same raw value always produces the same suffix, so the AI can join or deduplicate across rows without ever seeing the underlying data.
-
-```json
-{
-  "rows": [{"id": 1, "email": "[PII:email:7f83b165]", "ssn": "[PII:ssn:3c2a1b0e]"}],
-  "count": 1,
-  "_gate_summary": {"redacted": 2, "types": ["email", "ssn"], "warnings": []}
-}
-```
-
-Error responses from the underlying tool pass through unchanged.
-
 ## Uninstallation
 
 ```bash
@@ -500,40 +383,6 @@ brew uninstall gate
 ```
 
 `gate uninstall` removes everything gate added to your system — the hook from `~/.claude/settings.json`, the config directory at `~/.config/gate/`, and any gate-generated opencode plugins. It shows you exactly what will be deleted and asks for confirmation before touching anything.
-
-## Troubleshooting
-
-**Commands are passing through unredacted.**
-
-Run `gate validate` to check for config errors. Confirm the hook is registered by checking that `~/.claude/settings.json` contains a `gate hook` entry — if not, re-run `gate init`. Then restart your agent session so the harness picks up the updated settings.
-
-**`gate: command not found` inside the agent session.**
-
-The shell PATH inside the harness may differ from your login shell. Find the full path with `which gate` in a normal terminal, then set `GATE_BIN` to that path or add the directory to the harness's PATH in your shell profile.
-
-**OpenCode isn't intercepting commands after `gate init`.**
-
-The plugin is loaded at session start — restart your opencode session after running `gate init --harness opencode`.
-
-**Config file not found.**
-
-Run `gate config` to create `~/.config/gate/config.yaml`. If you store the config elsewhere, set `GATE_CONFIG=/path/to/config.yaml` in your environment.
-
-**Certain fields are not being masked (false negatives).**
-
-Run `gate run --verbose -- <your-command>` to see exactly why each field was passed or redacted. For each string field, verbose mode prints which step triggered (forced column, column-name classifier, Luhn, regex) or `passed (no match)` if nothing fired. You can also pipe a sample payload directly: `echo '<json>' | gate run --verbose`. Common fixes: add the column name to `column_names:` in config, or lower `confidence_threshold` if a pattern is matching below the threshold.
-
-**`gate run --verbose` shows "input is not JSON — redaction skipped".**
-
-The tool's output is not valid JSON, so Gate 2 cannot inspect it and passes the raw bytes through unchanged. This is expected for tools that return plain text or binary output. If you expect JSON, check the tool's output format — some CLIs require a `--json` or `--output json` flag to produce structured output.
-
-**Non-PII values are being redacted (false positives).**
-
-Raise `confidence_threshold` (e.g. to `0.9`) to reduce over-redaction, or narrow the regex for the offending pattern in the `patterns` block. Run `gate validate` after editing to catch syntax errors.
-
-**`_gate_summary` warns about `SELECT *`.**
-
-Gate 1 can't infer column types from a wildcard query, so every value is passed to Gate 2's regex scanner. Use an explicit column list (`SELECT id, status, created_at FROM users`) to skip the warning and avoid scanning non-PII columns.
 
 ## Contributing
 
