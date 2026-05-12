@@ -137,6 +137,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn editor_invoked_via_editor_env() {
         let _guard = ENV_LOCK.lock().unwrap();
         let (_dir, path) = tmp_config();
