@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || 'main' }}
+          ref: main
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -31,23 +31,23 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ github.event.inputs.tag }}"
-            VERSION="${TAG#v}"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           else
-            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${TAG#v}"
+          CURRENT=$(grep '^version' crates/gate/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$CURRENT" != "$VERSION" ]; then
             sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" crates/gate/Cargo.toml
             cargo generate-lockfile
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add crates/gate/Cargo.toml Cargo.lock
-            git diff --cached --quiet || git commit -m "chore: bump version to ${VERSION}"
+            git commit -m "chore: bump version to ${VERSION}"
             git push origin main
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
