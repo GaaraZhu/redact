@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 
+mod allowlist;
 mod command;
 mod config_cmd;
 mod enable_disable;
@@ -90,6 +91,15 @@ enum Commands {
         /// Emit results as JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+        /// After showing results, interactively mark false-positive columns to add to the allowlist
+        #[arg(long)]
+        review: bool,
+    },
+    /// Manage the column allowlist — columns that skip name-based PII redaction.
+    /// Value-based checks (Luhn, regex patterns) still apply to allowlisted columns.
+    Allowlist {
+        #[command(subcommand)]
+        action: AllowlistAction,
     },
     /// Run a stdio MCP proxy: intercepts tools/call responses and redacts PII.
     /// Usage: gate mcp [--] <upstream-cmd> [args...]
@@ -108,6 +118,24 @@ enum Commands {
     Uninstall,
     /// Print version
     Version,
+}
+
+#[derive(Subcommand)]
+enum AllowlistAction {
+    /// Add column names to the allowlist
+    Add {
+        /// One or more column names to allowlist
+        #[arg(required = true)]
+        columns: Vec<String>,
+    },
+    /// Remove column names from the allowlist
+    Remove {
+        /// One or more column names to remove
+        #[arg(required = true)]
+        columns: Vec<String>,
+    },
+    /// Show the current allowlist
+    List,
 }
 
 fn main() {
@@ -138,7 +166,18 @@ fn main() {
             init_only,
         } => config_cmd::run(path, print, init_only),
         Commands::List => list::run(),
-        Commands::Scan { verbose, json } => scan::run(verbose, json),
+        Commands::Scan {
+            verbose,
+            json,
+            review,
+        } => scan::run(verbose, json, review),
+        Commands::Allowlist { action } => match action {
+            AllowlistAction::Add { columns } => allowlist::run(allowlist::Action::Add(columns)),
+            AllowlistAction::Remove { columns } => {
+                allowlist::run(allowlist::Action::Remove(columns))
+            }
+            AllowlistAction::List => allowlist::run(allowlist::Action::List),
+        },
         Commands::Mcp { upstream } => {
             // Strip a leading "--" separator if clap passed it through
             let upstream = if upstream.first().map(String::as_str) == Some("--") {

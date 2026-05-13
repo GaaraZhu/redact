@@ -98,9 +98,26 @@ Note
 
 Hint
   Use --verbose to show all detected columns
+  Use --review to interactively mark false positives
 ```
 
 Risk level is weighted by category sensitivity — one SSN column matters more than twenty address columns. The command exits with code 1 if any PII columns are found, making it scriptable in CI audits. Pass `--verbose` to show the full list of detected columns.
+
+### Handling false positives
+
+Some column names may be flagged incorrectly — for example `city` in a `products` table or `bank_account_id` used as a foreign key. Run `gate scan --review` after the report to triage these interactively:
+
+```
+Allowlist false positives
+───────────────────────────────────────────────────────────
+Columns to allowlist (space/comma-separated), or Enter to skip: city state
+Columns to remove (space/comma-separated), or Enter to keep all:
+
+Added 2 column(s): city, state
+Config updated: /Users/alice/.config/gate/config.yaml
+```
+
+Allowlisted columns skip **name-based** redaction only. Gate 2 still checks their values against regex patterns and the Luhn credit-card algorithm. Manage the list directly with `gate allowlist add/remove/list`.
 
 | Sensitivity | Categories | Risk floor |
 |-------------|-----------|------------|
@@ -364,7 +381,10 @@ The `tk*` commands are managed by [toolkit](https://github.com/scott-abernethy/t
 | `gate list` | Show configured tools and their SQL flags |
 | `gate validate` | Check config for errors and warnings |
 | `gate version` | Print version |
-| `gate scan [--verbose] [--json]` | Pipe schema query output (`SELECT TABLE_NAME, COLUMN_NAME ...`) into this to get a PII risk report across all tables. `--verbose` shows all detected columns without truncation. `--json` emits results as machine-readable JSON instead of the human-readable report. Exits 1 if any PII columns are found — scriptable in CI audits. |
+| `gate scan [--verbose] [--json] [--review]` | Pipe schema query output (`SELECT TABLE_NAME, COLUMN_NAME ...`) into this to get a PII risk report across all tables. `--verbose` shows all detected columns without truncation. `--json` emits results as machine-readable JSON instead of the human-readable report. `--review` enters an interactive triage session after the report to mark false-positive columns and add them to the allowlist. Exits 1 if any PII columns are found — scriptable in CI audits. |
+| `gate allowlist add <col> [col...]` | Add column names to the allowlist. Allowlisted columns skip name-based redaction; value-based checks (Luhn, regex) still apply. Changes are written atomically to config. Duplicates are ignored. |
+| `gate allowlist remove <col> [col...]` | Remove column names from the allowlist. |
+| `gate allowlist list` | Show the current allowlist. |
 | `gate run [--verbose] [-- <cmd>]` | Run a command through the redaction pipeline, or pipe JSON from stdin for direct Gate 2 inspection. Normally invoked by the hook; run manually to test. `--verbose` prints each field's Gate 2 decision to stderr. |
 | `gate hook` | *(internal)* Hook entry point — invoked by the harness, not directly |
 

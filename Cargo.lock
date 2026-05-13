@@ -364,6 +364,7 @@ dependencies = [
  "mcp",
  "regex",
  "serde_json",
+ "serde_yaml",
  "shell-words",
  "tempfile",
 ]

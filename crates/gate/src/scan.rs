@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read, Write};
 
 use common::config::Config;
 use common::error::exit_with_error;
@@ -32,7 +32,7 @@ const TIER1_CATEGORIES_ORDERED: &[&str] = &[
 ///
 /// The subcommand extracts (table_name, column_name) pairs and runs Gate 1 column
 /// classification on each column name.
-pub fn run(verbose: bool, json: bool) {
+pub fn run(verbose: bool, json: bool, review: bool) {
     let config = match Config::load() {
         Ok(c) => c,
         Err(e) => exit_with_error(&format!(
@@ -64,15 +64,30 @@ pub fn run(verbose: bool, json: bool) {
     // Classify each column and aggregate results
     let stats = aggregate_by_category(&pairs, &config);
 
-    // Render the report
+    let has_pii = stats.iter().any(|r| r.tier1 != "No PII");
+
+    // Render the report. --review implies verbose so every column is visible
+    // before the user is asked about it.
     if json {
+        if review {
+            eprintln!("error: --review is not supported with --json");
+            std::process::exit(1);
+        }
         print_json_report(&pairs, &stats);
     } else {
-        print_report(&pairs, &stats, verbose);
+        print_report(&pairs, &stats, verbose || review);
+    }
+
+    // --review: interactive false-positive triage
+    if review {
+        if !has_pii {
+            println!("No PII columns detected — nothing to review.");
+        } else {
+            run_review();
+        }
     }
 
     // Exit code: 0 if no PII found, 1 if any PII columns detected
-    let has_pii = stats.iter().any(|result| result.tier1 != "No PII");
     std::process::exit(if has_pii { 1 } else { 0 });
 }
 
@@ -681,7 +696,109 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
         println!();
         println!("\x1b[1mHint\x1b[0m");
         println!("  Use --verbose to show all detected columns");
+        println!("  Use --review to interactively mark false positives");
     }
+}
+
+/// Interactive false-positive triage: two single-line prompts — one to add, one to remove.
+fn run_review() {
+    // Open /dev/tty directly so prompts work even when stdin is a pipe
+    // (e.g. `psql ... | gate scan --review`). Falls back gracefully if no TTY is available.
+    let tty = match std::fs::OpenOptions::new().read(true).open("/dev/tty") {
+        Ok(f) => f,
+        Err(_) => {
+            eprintln!("note: --review requires an interactive terminal");
+            return;
+        }
+    };
+    let mut tty_reader = BufReader::new(tty);
+
+    // Load config path and current allowlist up front.
+    let path = match common::config::config_path() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: cannot resolve config path: {e}");
+            return;
+        }
+    };
+    let content = if path.exists() {
+        std::fs::read_to_string(&path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let existing = crate::allowlist::parse_current_allowlist(&content);
+
+    println!();
+    println!("\x1b[1mAllowlist false positives\x1b[0m");
+    println!("{}", "─".repeat(59));
+
+    // Prompt 1: add to allowlist
+    print!("Columns to allowlist (space/comma-separated), or Enter to skip: ");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    if tty_reader.read_line(&mut line).is_err() {
+        return;
+    }
+    let to_add: Vec<String> = parse_name_list(&line)
+        .into_iter()
+        .filter(|c| !existing.iter().any(|e| e == c))
+        .collect();
+
+    // Prompt 2: remove from allowlist (only shown if allowlist is non-empty)
+    let mut to_remove: Vec<String> = Vec::new();
+    if !existing.is_empty() {
+        println!("Currently allowlisted: {}", existing.join(", "));
+        print!("Columns to remove (space/comma-separated), or Enter to keep all: ");
+        let _ = std::io::stdout().flush();
+        let mut line2 = String::new();
+        if tty_reader.read_line(&mut line2).is_ok() {
+            to_remove = parse_name_list(&line2)
+                .into_iter()
+                .filter(|c| existing.iter().any(|e| e == c))
+                .collect();
+        }
+    }
+
+    if to_add.is_empty() && to_remove.is_empty() {
+        println!("No changes to allowlist.");
+        return;
+    }
+
+    // Apply adds then removes atomically in a single write.
+    let mut new_content = crate::allowlist::add_to_allowlist_in_yaml(&content, &to_add);
+    new_content = crate::allowlist::remove_from_allowlist_in_yaml(&new_content, &to_remove);
+
+    if let Err(e) = crate::allowlist::write_atomic(&path, &new_content) {
+        eprintln!("error: failed to write config: {e}");
+        return;
+    }
+
+    println!();
+    if !to_add.is_empty() {
+        println!("Added {} column(s): {}", to_add.len(), to_add.join(", "));
+    }
+    if !to_remove.is_empty() {
+        println!(
+            "Removed {} column(s): {}",
+            to_remove.len(),
+            to_remove.join(", ")
+        );
+    }
+    println!("Config updated: {}", path.display());
+}
+
+/// Split a user input line on spaces and/or commas, returning lowercased column names.
+/// Strips a leading `table.` prefix so pasting `users.first_name` works like `first_name`.
+fn parse_name_list(input: &str) -> Vec<String> {
+    input
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let col = s.rsplit_once('.').map(|(_, c)| c).unwrap_or(s);
+            col.to_lowercase()
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -75,6 +75,10 @@ pub struct PiiConfig {
     /// Additional column names beyond the built-in denylist. Use `effective_column_names()` to get the merged set.
     #[serde(default)]
     pub column_names: Vec<String>,
+    /// Column names that must never be auto-redacted by name. Overrides both the built-in
+    /// denylist and `column_names`. Value-based checks (Luhn, regex patterns) still apply.
+    #[serde(default)]
+    pub column_allowlist: Vec<String>,
     #[serde(default)]
     pub action: Action,
     #[serde(default)]
@@ -140,6 +144,7 @@ impl Default for PiiConfig {
     fn default() -> Self {
         Self {
             column_names: Vec::new(),
+            column_allowlist: Vec::new(),
             action: Action::default(),
             wildcard_policy: WildcardPolicy::default(),
             patterns: HashMap::new(),
@@ -165,6 +170,14 @@ impl PiiConfig {
             }
         }
         names
+    }
+
+    /// Returns the lowercased allowlist. Columns in this list skip name-based redaction.
+    pub fn effective_column_allowlist(&self) -> Vec<String> {
+        self.column_allowlist
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect()
     }
 }
 
@@ -231,6 +244,7 @@ mod tests {
         assert_eq!(config.pii.wildcard_policy, WildcardPolicy::Warn);
         assert!(config.tools.is_empty());
         assert!(config.pii.column_names.is_empty());
+        assert!(config.pii.column_allowlist.is_empty());
         assert!(config.pii.patterns.is_empty());
         assert!(!config.pii.hash_values);
         assert_eq!(config.pii.hash_salt, "");
@@ -385,5 +399,27 @@ pii:
         let config = load_from_yaml("mcp:\n  redact_tool_results: false\n").unwrap();
         assert!(!config.mcp.redact_tool_results);
         assert_eq!(config.mcp.max_payload_bytes, 5 * 1024 * 1024);
+    }
+
+    #[test]
+    fn column_allowlist_parses_from_yaml() {
+        let yaml = "pii:\n  column_allowlist:\n    - city\n    - state\n";
+        let config = load_from_yaml(yaml).unwrap();
+        assert_eq!(config.pii.column_allowlist, vec!["city", "state"]);
+    }
+
+    #[test]
+    fn column_allowlist_defaults_to_empty() {
+        let config = load_from_yaml("pii:\n  action: warn\n").unwrap();
+        assert!(config.pii.column_allowlist.is_empty());
+    }
+
+    #[test]
+    fn effective_column_allowlist_lowercases() {
+        let config =
+            load_from_yaml("pii:\n  column_allowlist:\n    - City\n    - STATE\n").unwrap();
+        let al = config.pii.effective_column_allowlist();
+        assert!(al.contains(&"city".to_string()));
+        assert!(al.contains(&"state".to_string()));
     }
 }

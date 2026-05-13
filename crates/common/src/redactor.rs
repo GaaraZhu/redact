@@ -91,6 +91,7 @@ pub fn redact(payload: Value, plan: &RedactPlan, config: &PiiConfig) -> Value {
 
     let patterns = CompiledPattern::from_config(&config.patterns);
     let effective_names = config.effective_column_names();
+    let effective_allowlist = config.effective_column_allowlist();
     let mut summary = RedactSummary::new();
 
     let redacted_payload = if let Shape::Columnar {
@@ -106,6 +107,7 @@ pub fn redact(payload: Value, plan: &RedactPlan, config: &PiiConfig) -> Value {
             config,
             &patterns,
             &effective_names,
+            &effective_allowlist,
             &mut summary,
         )
     } else {
@@ -116,6 +118,7 @@ pub fn redact(payload: Value, plan: &RedactPlan, config: &PiiConfig) -> Value {
             config,
             &patterns,
             &effective_names,
+            &effective_allowlist,
             &mut summary,
         )
     };
@@ -209,6 +212,7 @@ fn redact_columnar(
     config: &PiiConfig,
     patterns: &[CompiledPattern],
     effective_names: &[String],
+    effective_allowlist: &[String],
     summary: &mut RedactSummary,
 ) -> Value {
     let Value::Object(mut map) = payload else {
@@ -245,6 +249,7 @@ fn redact_columnar(
                                     config,
                                     patterns,
                                     effective_names,
+                                    effective_allowlist,
                                     summary,
                                 )
                             })
@@ -252,7 +257,16 @@ fn redact_columnar(
                     )
                 } else {
                     // Non-array row: walk without column context
-                    walk(row, None, plan, config, patterns, effective_names, summary)
+                    walk(
+                        row,
+                        None,
+                        plan,
+                        config,
+                        patterns,
+                        effective_names,
+                        effective_allowlist,
+                        summary,
+                    )
                 }
             })
             .collect();
@@ -270,6 +284,7 @@ fn redact_columnar(
                 config,
                 patterns,
                 effective_names,
+                effective_allowlist,
                 summary,
             );
             (k, new_v)
@@ -281,6 +296,7 @@ fn redact_columnar(
 
 // ── Tree walk ─────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn walk(
     val: Value,
     key: Option<&str>,
@@ -288,10 +304,20 @@ fn walk(
     config: &PiiConfig,
     patterns: &[CompiledPattern],
     effective_names: &[String],
+    effective_allowlist: &[String],
     summary: &mut RedactSummary,
 ) -> Value {
     match val {
-        Value::String(s) => scan_string(s, key, plan, config, patterns, effective_names, summary),
+        Value::String(s) => scan_string(
+            s,
+            key,
+            plan,
+            config,
+            patterns,
+            effective_names,
+            effective_allowlist,
+            summary,
+        ),
         Value::Object(map) => {
             let new_map: Map<String, Value> = map
                 .into_iter()
@@ -303,6 +329,7 @@ fn walk(
                         config,
                         patterns,
                         effective_names,
+                        effective_allowlist,
                         summary,
                     );
                     (k, new_v)
@@ -312,7 +339,18 @@ fn walk(
         }
         Value::Array(arr) => Value::Array(
             arr.into_iter()
-                .map(|v| walk(v, key, plan, config, patterns, effective_names, summary))
+                .map(|v| {
+                    walk(
+                        v,
+                        key,
+                        plan,
+                        config,
+                        patterns,
+                        effective_names,
+                        effective_allowlist,
+                        summary,
+                    )
+                })
                 .collect(),
         ),
         other => other,
@@ -321,6 +359,7 @@ fn walk(
 
 // ── Per-value scanner ─────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn scan_string(
     s: String,
     key: Option<&str>,
@@ -328,6 +367,7 @@ fn scan_string(
     config: &PiiConfig,
     patterns: &[CompiledPattern],
     effective_names: &[String],
+    effective_allowlist: &[String],
     summary: &mut RedactSummary,
 ) -> Value {
     let vb = plan.verbose;
@@ -341,52 +381,75 @@ fn scan_string(
 
     let key_lower = key.map(|k| k.to_lowercase());
 
-    // 1. Gate 1 forced columns (keys are pre-lowercased by Gate 1).
-    if let Some(ref k) = key_lower {
-        if let Some(type_label) = plan.forced_columns.get(k.as_str()) {
-            if vb {
-                eprintln!(
-                    "[gate] field {:?} → REDACTED (step: forced_column, type: {})",
-                    kname, type_label
-                );
-            }
-            return do_redact(type_label, &s, config, summary);
-        }
-    }
+    // Allowlist check: if the column name is explicitly allowlisted, skip all
+    // name-based redaction steps (1–3). Value-based checks (Luhn, regex) still apply.
+    let is_allowlisted = key_lower
+        .as_deref()
+        .map(|k| effective_allowlist.iter().any(|a| a == k))
+        .unwrap_or(false);
 
-    // 2. Token-based column classification — catches camelCase, synonyms, etc.
-    //    Force-redacts any value under a PII-named key, regardless of content.
-    if let Some(k) = key {
-        if let Some(pii_type) = classify_column(k) {
-            if vb {
-                eprintln!(
-                    "[gate] field {:?} → REDACTED (step: column_classify, type: {})",
-                    kname, pii_type
-                );
+    if !is_allowlisted {
+        // 1. Gate 1 forced columns (keys are pre-lowercased by Gate 1).
+        if let Some(ref k) = key_lower {
+            if let Some(type_label) = plan.forced_columns.get(k.as_str()) {
+                if vb {
+                    eprintln!(
+                        "[gate] field {:?} → REDACTED (step: forced_column, type: {})",
+                        kname, type_label
+                    );
+                }
+                return do_redact(type_label, &s, config, summary);
             }
-            return do_redact(pii_type, &s, config, summary);
         }
-    }
 
-    // 3. Exact match against the effective column-name list.
-    //    Covers user-supplied column names not handled by the synonym table.
-    if let Some(ref k) = key_lower {
-        if effective_names.iter().any(|n| n == k) {
-            if vb {
-                eprintln!(
-                    "[gate] field {:?} → REDACTED (step: column_name_exact, type: {})",
-                    kname, k
-                );
+        // 2. Token-based column classification — catches camelCase, synonyms, etc.
+        //    Force-redacts any value under a PII-named key, regardless of content.
+        if let Some(k) = key {
+            if let Some(pii_type) = classify_column(k) {
+                if vb {
+                    eprintln!(
+                        "[gate] field {:?} → REDACTED (step: column_classify, type: {})",
+                        kname, pii_type
+                    );
+                }
+                return do_redact(pii_type, &s, config, summary);
             }
-            return do_redact(k.as_str(), &s, config, summary);
         }
+
+        // 3. Exact match against the effective column-name list.
+        //    Covers user-supplied column names not handled by the synonym table.
+        if let Some(ref k) = key_lower {
+            if effective_names.iter().any(|n| n == k) {
+                if vb {
+                    eprintln!(
+                        "[gate] field {:?} → REDACTED (step: column_name_exact, type: {})",
+                        kname, k
+                    );
+                }
+                return do_redact(k.as_str(), &s, config, summary);
+            }
+        }
+    } else if vb {
+        eprintln!(
+            "[gate] field {:?} → skipping name-based checks (allowlisted)",
+            kname
+        );
     }
 
     // 4. JSONB: if the value is a serialised JSON object or array, scan it recursively.
     if let Ok(inner) = serde_json::from_str::<Value>(&s) {
         if matches!(inner, Value::Object(_) | Value::Array(_)) {
             let count_before = summary.redacted;
-            let walked = walk(inner, key, plan, config, patterns, effective_names, summary);
+            let walked = walk(
+                inner,
+                key,
+                plan,
+                config,
+                patterns,
+                effective_names,
+                effective_allowlist,
+                summary,
+            );
             if summary.redacted > count_before {
                 if vb {
                     eprintln!(
@@ -1027,6 +1090,72 @@ mod tests {
         let val = profile["email"].as_str().unwrap();
         assert!(val.starts_with("[PII:email:"), "got: {val}");
         assert_eq!(out["_gate_summary"]["redacted"], 1);
+    }
+
+    // ── 19. Allowlist ─────────────────────────────────────────────────────────
+
+    fn cfg_allowlist(columns: &[&str]) -> PiiConfig {
+        PiiConfig {
+            column_allowlist: columns.iter().map(|s| s.to_string()).collect(),
+            ..PiiConfig::default()
+        }
+    }
+
+    #[test]
+    fn allowlisted_column_passes_through_name_check() {
+        // "city" normally triggers address redaction; with allowlist it should pass through.
+        let config = cfg_allowlist(&["city"]);
+        let input = json!({"city": "Wellington", "email": "alice@example.com"});
+        let out = redact(input, &plan(), &config);
+        assert_eq!(out["city"], "Wellington");
+        assert_eq!(out["email"], "[PII:email]");
+        assert_eq!(out["_gate_summary"]["redacted"], 1);
+    }
+
+    #[test]
+    fn allowlist_is_case_insensitive() {
+        let config = cfg_allowlist(&["City"]);
+        let input = json!({"city": "Auckland"});
+        let out = redact(input, &plan(), &config);
+        assert_eq!(out["city"], "Auckland");
+    }
+
+    #[test]
+    fn allowlisted_column_still_redacts_luhn_value() {
+        // Even if the column is allowlisted, a Luhn-valid CC number must still be redacted.
+        let config = cfg_allowlist(&["bank_code"]);
+        let input = json!({"bank_code": "4111111111111111"});
+        let out = redact(input, &plan(), &config);
+        assert_eq!(out["bank_code"], "[PII:credit_card]");
+    }
+
+    #[test]
+    fn allowlisted_column_still_redacts_regex_match() {
+        // A high-confidence SSN in an allowlisted column must still be caught by regex.
+        let config = cfg_allowlist(&["ref_code"]);
+        let input = json!({"ref_code": "123-45-6789"});
+        let out = redact(input, &plan(), &config);
+        assert_eq!(out["ref_code"], "[PII:ssn]");
+    }
+
+    #[test]
+    fn allowlist_overrides_forced_column_from_gate1() {
+        let mut p = plan();
+        p.forced_columns
+            .insert("city".to_string(), "address".to_string());
+        let config = cfg_allowlist(&["city"]);
+        let input = json!({"city": "Wellington"});
+        let out = redact(input, &p, &config);
+        assert_eq!(out["city"], "Wellington");
+    }
+
+    #[test]
+    fn non_allowlisted_columns_still_redacted() {
+        let config = cfg_allowlist(&["city"]);
+        let input = json!({"city": "Auckland", "state": "NSW"});
+        let out = redact(input, &plan(), &config);
+        assert_eq!(out["city"], "Auckland");
+        assert_eq!(out["state"], "[PII:address]");
     }
 
     #[test]
