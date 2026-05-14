@@ -39,16 +39,16 @@ Before installing the hook, use `gate scan` to assess how much PII your database
 
 ```bash
 # PostgreSQL (toolkit-managed)
-tkpsql query --sql "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position" | gate scan
+tkpsql query --sql "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'public' ORDER BY TABLE_NAME, ORDINAL_POSITION" | gate scan
 
 # PostgreSQL (direct)
-psql -U <user> -h <host> -d <dbname> -c "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position" | gate scan
+psql -U <user> -h <host> -d <dbname> -c "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'public' ORDER BY TABLE_NAME, ORDINAL_POSITION" | gate scan
 
 # Databricks (toolkit-managed)
 tkdbr query --conn dev --sql "SELECT TABLE_NAME, COLUMN_NAME FROM system.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '<schema>' ORDER BY TABLE_NAME, COLUMN_NAME" --limit 1000 | gate scan
 
 # Databricks (native CLI)
-databricks sql query "SELECT column_name, table_name FROM system.information_schema.columns WHERE table_schema = '<schema>' LIMIT 1000" | jq -r '[.[] | {table_name, column_name}]' | gate scan
+databricks sql query "SELECT TABLE_NAME, COLUMN_NAME FROM system.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '<schema>' LIMIT 1000" | jq -r '[.[] | {TABLE_NAME, COLUMN_NAME}]' | gate scan
 
 # MS SQL Server (toolkit-managed)
 tkmsql query --sql "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS ORDER BY TABLE_NAME, ORDINAL_POSITION" | gate scan
