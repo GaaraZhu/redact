@@ -11,7 +11,6 @@ mod list;
 mod run;
 mod scan;
 mod starter;
-mod sync;
 mod uninstall;
 mod validate;
 
@@ -79,8 +78,6 @@ enum Commands {
         /// Write a starter config if missing, then exit (no editor)
         #[arg(long = "init-only")]
         init_only: bool,
-        #[command(subcommand)]
-        sub: Option<ConfigSubcommand>,
     },
     /// List configured tools and their sql_arg values
     List,
@@ -132,14 +129,6 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
-enum ConfigSubcommand {
-    /// Merge .gate/columns.yaml from this project into your personal config (~/.config/gate/config.yaml).
-    /// Only column_names and column_allowlist are merged — tool and MCP settings stay personal.
-    /// Safe to run repeatedly; never removes existing entries.
-    Sync,
-}
-
-#[derive(Subcommand)]
 enum AllowlistAction {
     /// Add column names to the allowlist
     Add {
@@ -183,11 +172,7 @@ fn main() {
             path,
             print,
             init_only,
-            sub,
-        } => match sub {
-            Some(ConfigSubcommand::Sync) => sync::run(),
-            None => config_cmd::run(path, print, init_only),
-        },
+        } => config_cmd::run(path, print, init_only),
         Commands::List => list::run(),
         Commands::Scan {
             verbose,
