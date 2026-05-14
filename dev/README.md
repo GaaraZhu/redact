@@ -33,49 +33,43 @@ Restart Claude Code so the hook takes effect.
 
 ```sh
 # Raw output — PII fully visible
-psql-json --sql "SELECT id, first_name, email, ssn, credit_card FROM users"
+psql-json --sql "SELECT id, full_name, email, status FROM users"
 
 # Through gate — PII replaced with typed placeholders
-gate run -- psql-json --sql "SELECT id, first_name, email, ssn, credit_card FROM users"
+gate run -- psql-json --sql "SELECT id, full_name, email, status FROM users"
 
-# Joins work fine; Gate 2 catches PII regardless of table
-gate run -- psql-json --sql "
-  SELECT u.email, u.phone, o.product, o.amount
-  FROM users u JOIN orders o ON o.user_id = u.id"
+# Non-PII columns pass through untouched
+gate run -- psql-json --sql "SELECT id, status, created_at FROM users"
 
 # SELECT * is rejected by Gate 1 (wildcard_policy: reject)
 gate run -- psql-json --sql "SELECT * FROM users"
-
-# Allow SELECT * by setting wildcard_policy: warn in config, then:
-gate run -- psql-json --sql "SELECT * FROM orders"
 ```
 
 ## Full hook demo inside Claude Code
 
 With `gate init` done and Claude Code restarted, ask the AI:
 
-> Run `psql-json --sql "SELECT id, first_name, email, ssn, credit_card FROM users"`
+> Run `psql-json --sql "SELECT id, full_name, email, status FROM users"`
 
 The hook fires transparently. Claude sees:
 
 ```json
 {
   "rows": [
-    { "id": 1, "first_name": "[PII:name]", "email": "[PII:email]", "ssn": "[PII:ssn]", "credit_card": "[PII:credit_card]" },
-    ...
+    { "id": 1, "full_name": "[PII:name]", "email": "[PII:email]", "status": "active" },
+    { "id": 2, "full_name": "[PII:name]", "email": "[PII:email]", "status": "active" }
   ],
-  "_gate_summary": { "redacted": 40, "types": ["credit_card", "email", "name", "ssn"], "warnings": [] }
+  "_gate_summary": { "redacted": 10, "types": ["email", "name"], "warnings": [] }
 }
 ```
 
 ## Database
 
-| Table    | Columns |
-|----------|---------|
-| `users`  | id, first_name, last_name, email, phone, ssn, dob, address, credit_card, plan |
-| `orders` | id, user_id, product, amount, status, created_at |
+| Table   | Columns                                                      |
+|---------|--------------------------------------------------------------|
+| `users` | id, full_name, email, status, created_at, last_login_at      |
 
-All data is synthetic. SSNs use the `000-xx-xxxx` prefix (never issued). Credit cards are well-known Luhn-valid test vectors.
+`full_name` and `email` are the PII columns. All data is synthetic.
 
 ## MCP server
 
