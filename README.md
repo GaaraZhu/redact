@@ -47,6 +47,9 @@ psql -U <user> -h <host> -d <dbname> -c "SELECT table_name, column_name FROM inf
 # Databricks (toolkit-managed)
 tkdbr query --conn dev --sql "SELECT TABLE_NAME, COLUMN_NAME FROM system.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '<schema>' ORDER BY TABLE_NAME, COLUMN_NAME" --limit 1000 | gate scan
 
+# Databricks (native CLI)
+databricks sql query "SELECT column_name, table_name FROM system.information_schema.columns WHERE table_schema = '<schema>' LIMIT 1000" | jq -r '[.[] | {table_name, column_name}]' | gate scan
+
 # MS SQL Server (toolkit-managed)
 tkmsql query --sql "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS ORDER BY TABLE_NAME, ORDINAL_POSITION" | gate scan
 ```
@@ -363,6 +366,7 @@ The `tk*` commands are managed by [toolkit](https://github.com/scott-abernethy/t
 | `tkpsql` | PostgreSQL (toolkit-managed) | `sql_arg: "--sql"` |
 | `tkmsql` | MS SQL Server (toolkit-managed) | `sql_arg: "--sql"` |
 | `tkdbr` | Databricks (toolkit-managed) | `sql_arg: "--sql"` |
+| `databricks` | Databricks CLI (native) | `sql_arg: "--json"`, `json_sql_path: "statement"` — extracts SQL from JSON payload before redaction |
 | `psql` | PostgreSQL (direct) | `sql_arg: "-c"`, `extra_args: ["--csv"]`, `pipe: "python3 ..."` — gate injects `--csv` automatically and converts output to JSON |
 | `mysql` | MySQL (direct) | `sql_arg: "-e"` |
 | `curl` | HTTP data sources | `pipe: "jq -c ."` — wraps output through jq so Gate 2 receives JSON |
