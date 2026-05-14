@@ -48,7 +48,7 @@ psql -U <user> -h <host> -d <dbname> -c "SELECT TABLE_NAME, COLUMN_NAME FROM INF
 tkdbr query --conn dev --sql "SELECT TABLE_NAME, COLUMN_NAME FROM system.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '<schema>' ORDER BY TABLE_NAME, COLUMN_NAME" --limit 1000 | gate scan
 
 # Databricks (native CLI)
-databricks sql query "SELECT TABLE_NAME, COLUMN_NAME FROM system.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '<schema>' LIMIT 1000" | jq -r '[.[] | {TABLE_NAME, COLUMN_NAME}]' | gate scan
+databricks api post /api/2.0/sql/statements --profile <profile> --json "{\"statement\": \"SELECT TABLE_NAME, COLUMN_NAME FROM system.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '<schema>' LIMIT 1000\", \"warehouse_id\": \"<warehouse_id>\"}" | gate scan
 
 # MS SQL Server (toolkit-managed)
 tkmsql query --sql "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS ORDER BY TABLE_NAME, ORDINAL_POSITION" | gate scan

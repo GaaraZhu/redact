@@ -107,8 +107,13 @@ pub fn run(verbose: bool, json: bool, review: bool) {
 ///    (6 rows)
 ///    ```
 fn parse_columnar_json(input: &str) -> Result<Vec<(String, String)>, String> {
-    // Try JSON first (tkdbr array-of-arrays or psql array-of-objects format)
+    // Try JSON first
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(input.trim()) {
+        // Databricks API response: {"manifest": {"schema": {"columns": [...]}}, "result": {"data_array": [...]}}
+        if value.get("manifest").is_some() && value.get("result").is_some() {
+            return parse_databricks_api_response(&value);
+        }
+
         let rows = match value.get("rows") {
             Some(serde_json::Value::Array(r)) => r,
             _ => return Err(
@@ -300,6 +305,67 @@ fn split_csv_row(line: &str) -> Vec<String> {
 }
 
 /// Parse array-of-arrays format: `{"columns": [...], "rows": [[...], ...]}`
+/// Parse Databricks API response:
+/// `{"manifest": {"schema": {"columns": [{"name": "TABLE_NAME", ...}, ...]}}, "result": {"data_array": [[...], ...]}}`
+fn parse_databricks_api_response(
+    value: &serde_json::Value,
+) -> Result<Vec<(String, String)>, String> {
+    let columns = value
+        .get("manifest")
+        .and_then(|m| m.get("schema"))
+        .and_then(|s| s.get("columns"))
+        .and_then(|c| c.as_array())
+        .ok_or("Databricks response missing manifest.schema.columns")?;
+
+    let mut table_idx = None;
+    let mut column_idx = None;
+    for col in columns {
+        if let Some(name) = col.get("name").and_then(|n| n.as_str()) {
+            match name.to_lowercase().as_str() {
+                "table_name" => {
+                    table_idx = col
+                        .get("position")
+                        .and_then(|p| p.as_u64())
+                        .map(|p| p as usize)
+                }
+                "column_name" => {
+                    column_idx = col
+                        .get("position")
+                        .and_then(|p| p.as_u64())
+                        .map(|p| p as usize)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let table_idx = table_idx.ok_or(
+        "Databricks response missing TABLE_NAME column — query must SELECT TABLE_NAME, COLUMN_NAME",
+    )?;
+    let column_idx = column_idx.ok_or(
+        "Databricks response missing COLUMN_NAME column — query must SELECT TABLE_NAME, COLUMN_NAME"
+    )?;
+
+    let data_array = value
+        .get("result")
+        .and_then(|r| r.get("data_array"))
+        .and_then(|d| d.as_array())
+        .ok_or("Databricks response missing result.data_array")?;
+
+    let mut pairs = Vec::new();
+    for row in data_array {
+        if let Some(row_arr) = row.as_array() {
+            if let (Some(table), Some(col)) = (row_arr.get(table_idx), row_arr.get(column_idx)) {
+                if let (Some(t), Some(c)) = (table.as_str(), col.as_str()) {
+                    pairs.push((t.to_string(), c.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(pairs)
+}
+
 fn parse_array_of_arrays(
     value: &serde_json::Value,
     rows: &[serde_json::Value],
@@ -878,6 +944,105 @@ mod tests {
     }
 
     // ── parse_columnar_json ────────────────────────────────────────────────
+
+    // ── Databricks API response format ────────────────────────────────────────
+
+    #[test]
+    fn parse_databricks_api_response_basic() {
+        let json = r#"{
+            "manifest": {
+                "schema": {
+                    "columns": [
+                        {"name": "TABLE_NAME", "position": 0, "type_name": "STRING"},
+                        {"name": "COLUMN_NAME", "position": 1, "type_name": "STRING"}
+                    ]
+                }
+            },
+            "result": {
+                "data_array": [
+                    ["users", "email"],
+                    ["users", "first_name"],
+                    ["orders", "customer_id"]
+                ]
+            },
+            "status": {"state": "SUCCEEDED"}
+        }"#;
+        let pairs = parse_columnar_json(json).unwrap();
+        assert_eq!(pairs.len(), 3);
+        assert_eq!(pairs[0], ("users".to_string(), "email".to_string()));
+        assert_eq!(pairs[1], ("users".to_string(), "first_name".to_string()));
+        assert_eq!(pairs[2], ("orders".to_string(), "customer_id".to_string()));
+    }
+
+    #[test]
+    fn parse_databricks_api_response_columns_reversed() {
+        // COLUMN_NAME before TABLE_NAME — position field drives the mapping
+        let json = r#"{
+            "manifest": {
+                "schema": {
+                    "columns": [
+                        {"name": "COLUMN_NAME", "position": 0, "type_name": "STRING"},
+                        {"name": "TABLE_NAME", "position": 1, "type_name": "STRING"}
+                    ]
+                }
+            },
+            "result": {
+                "data_array": [["email", "users"]]
+            },
+            "status": {"state": "SUCCEEDED"}
+        }"#;
+        let pairs = parse_columnar_json(json).unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0], ("users".to_string(), "email".to_string()));
+    }
+
+    #[test]
+    fn parse_databricks_api_response_extra_columns_ignored() {
+        let json = r#"{
+            "manifest": {
+                "schema": {
+                    "columns": [
+                        {"name": "TABLE_NAME", "position": 0, "type_name": "STRING"},
+                        {"name": "COLUMN_NAME", "position": 1, "type_name": "STRING"},
+                        {"name": "DATA_TYPE", "position": 2, "type_name": "STRING"}
+                    ]
+                }
+            },
+            "result": {
+                "data_array": [["users", "email", "VARCHAR"]]
+            },
+            "status": {"state": "SUCCEEDED"}
+        }"#;
+        let pairs = parse_columnar_json(json).unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0], ("users".to_string(), "email".to_string()));
+    }
+
+    #[test]
+    fn parse_databricks_api_response_missing_column_name_errors() {
+        let json = r#"{
+            "manifest": {"schema": {"columns": [{"name": "TABLE_NAME", "position": 0}]}},
+            "result": {"data_array": [["users"]]}
+        }"#;
+        assert!(parse_columnar_json(json).is_err());
+    }
+
+    #[test]
+    fn parse_databricks_api_response_empty_data_array() {
+        let json = r#"{
+            "manifest": {
+                "schema": {
+                    "columns": [
+                        {"name": "TABLE_NAME", "position": 0},
+                        {"name": "COLUMN_NAME", "position": 1}
+                    ]
+                }
+            },
+            "result": {"data_array": []}
+        }"#;
+        let pairs = parse_columnar_json(json).unwrap();
+        assert!(pairs.is_empty());
+    }
 
     #[test]
     fn parse_lowercase_headers() {
