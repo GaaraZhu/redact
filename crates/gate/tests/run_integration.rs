@@ -253,7 +253,7 @@ fn json_tool_binary_spawned_and_sql_arg_translated() {
     let out = redact_run(
         &config,
         &fake_psql,
-        &["-U", "redact", "-c", "SELECT id, email FROM users"],
+        &["-U", "gate_demo", "-c", "SELECT id, email FROM users"],
     );
 
     assert_eq!(
