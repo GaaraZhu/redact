@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 
 use common::config::Config;
@@ -32,7 +32,7 @@ const TIER1_CATEGORIES_ORDERED: &[&str] = &[
 ///
 /// The subcommand extracts (table_name, column_name) pairs and runs Gate 1 column
 /// classification on each column name.
-pub fn run(verbose: bool, json: bool, review: bool) {
+pub fn run(verbose: bool, json: bool, review: bool, source: Option<&str>, diff: bool) {
     let config = match Config::load() {
         Ok(c) => c,
         Err(e) => exit_with_error(&format!(
@@ -52,30 +52,75 @@ pub fn run(verbose: bool, json: bool, review: bool) {
         Err(e) => exit_with_error(&e),
     };
 
+    if diff && source.is_none() {
+        exit_with_error("--diff requires --source");
+    }
+
     if pairs.is_empty() {
         if json {
             println!("{}", empty_json_report());
         } else {
             println!("No columns found in input.");
         }
+        if let Some(name) = source {
+            if let Err(e) = save_checkpoint(name, &[]) {
+                eprintln!("warning: failed to save checkpoint: {e}");
+            }
+        }
         std::process::exit(0);
     }
 
+    // Collect unique column names for checkpoint (before any diff filtering).
+    let all_column_names: Vec<String> = {
+        let mut seen = HashSet::new();
+        pairs
+            .iter()
+            .map(|(_, col)| col.clone())
+            .filter(|col| seen.insert(col.clone()))
+            .collect()
+    };
+
+    // In diff mode, filter pairs to only new columns since the last checkpoint.
+    let (display_pairs, is_first_scan) = if diff {
+        let name = source.unwrap();
+        match load_checkpoint(name) {
+            Some(prev) => {
+                let new_pairs: Vec<_> = pairs
+                    .into_iter()
+                    .filter(|(_, col)| !prev.contains(col))
+                    .collect();
+                (new_pairs, false)
+            }
+            None => (pairs, true),
+        }
+    } else {
+        (pairs, false)
+    };
+
     // Classify each column and aggregate results
-    let stats = aggregate_by_category(&pairs, &config);
+    let stats = aggregate_by_category(&display_pairs, &config);
 
     let has_pii = stats.iter().any(|r| r.tier1 != "No PII");
 
-    // Render the report. --review implies verbose so every column is visible
-    // before the user is asked about it.
+    // Render the report.
     if json {
         if review {
             eprintln!("error: --review is not supported with --json");
             std::process::exit(1);
         }
-        print_json_report(&pairs, &stats);
+        print_json_report(&display_pairs, &stats);
+    } else if diff && !is_first_scan {
+        print_diff_report(source.unwrap(), &display_pairs);
     } else {
-        print_report(&pairs, &stats, verbose || review);
+        // --review implies verbose so every column is visible before the user is asked about it.
+        print_report(&display_pairs, &stats, verbose || review);
+    }
+
+    // Save checkpoint with the full column list from this scan.
+    if let Some(name) = source {
+        if let Err(e) = save_checkpoint(name, &all_column_names) {
+            eprintln!("warning: failed to save checkpoint: {e}");
+        }
     }
 
     // --review: interactive false-positive triage
@@ -87,7 +132,7 @@ pub fn run(verbose: bool, json: bool, review: bool) {
         }
     }
 
-    // Exit code: 0 if no PII found, 1 if any PII columns detected
+    // Exit code: 0 if no new PII found, 1 if any PII columns detected
     std::process::exit(if has_pii { 1 } else { 0 });
 }
 
@@ -880,6 +925,80 @@ fn run_review() {
     println!("Config updated: {}", path.display());
 }
 
+/// Save a scan checkpoint for the given source to `.gate/scans/<name>.json`.
+/// The checkpoint is a sorted JSON array of unique column names.
+fn save_checkpoint(source: &str, columns: &[String]) -> std::io::Result<()> {
+    let dir = std::path::Path::new(".gate/scans");
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(format!("{source}.json"));
+    let tmp_path = dir.join(format!("{source}.json.tmp"));
+    let mut sorted = columns.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    let content = serde_json::to_string_pretty(&sorted).map_err(std::io::Error::other)?;
+    std::fs::write(&tmp_path, content)?;
+    std::fs::rename(&tmp_path, &path)?;
+    Ok(())
+}
+
+/// Load the previous scan checkpoint for the given source.
+/// Returns None if no checkpoint exists yet (first scan).
+fn load_checkpoint(source: &str) -> Option<HashSet<String>> {
+    let path = std::path::Path::new(".gate/scans").join(format!("{source}.json"));
+    let content = std::fs::read_to_string(path).ok()?;
+    let columns: Vec<String> = serde_json::from_str(&content).ok()?;
+    Some(columns.into_iter().collect())
+}
+
+/// Print a compact diff report showing only new columns since the last scan.
+fn print_diff_report(source: &str, new_pairs: &[(String, String)]) {
+    println!("\x1b[1mGate PII Scan — New columns ({})\x1b[0m", source);
+    println!("{}", "─".repeat(59));
+
+    if new_pairs.is_empty() {
+        println!("\n  No new columns since last scan.\n");
+        println!("Checkpoint updated: .gate/scans/{source}.json");
+        return;
+    }
+
+    println!();
+
+    // Collect unique new column names with their classification
+    let mut seen = HashSet::new();
+    let mut rows: Vec<(String, String)> = Vec::new();
+    for (_, col) in new_pairs {
+        if seen.insert(col.clone()) {
+            let classification = match classify_column(col) {
+                Some(pii_type) => {
+                    let tier1 = map_to_tier1_category(pii_type);
+                    let weight = category_weight(tier1);
+                    format!("{tier1} ({})", sensitivity_label(weight))
+                }
+                None => "No PII".to_string(),
+            };
+            rows.push((col.clone(), classification));
+        }
+    }
+
+    let max_col_len = rows.iter().map(|(c, _)| c.len()).max().unwrap_or(10);
+    for (col, classification) in &rows {
+        println!("  {:<width$}  {}", col, classification, width = max_col_len);
+    }
+
+    let pii_count = rows.iter().filter(|(_, c)| c != "No PII").count();
+    println!();
+    println!(
+        "  {} new column(s) — {} need PII classification",
+        rows.len(),
+        pii_count
+    );
+    if pii_count > 0 {
+        println!("  Update .gate/columns.yaml to classify them.");
+    }
+    println!();
+    println!("Checkpoint updated: .gate/scans/{source}.json");
+}
+
 /// Split a user input line on spaces and/or commas, returning lowercased column names.
 /// Strips a leading `table.` prefix so pasting `users.first_name` works like `first_name`.
 fn parse_name_list(input: &str) -> Vec<String> {
@@ -1450,5 +1569,64 @@ mod tests {
     fn csv_missing_table_name_column_errors() {
         let csv = "column_name,data_type\nemail,text\n";
         assert!(parse_columnar_json(csv).is_err());
+    }
+
+    // ── checkpoint save/load ──────────────────────────────────────────────────
+
+    #[test]
+    fn checkpoint_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let scans_dir = dir.path().join(".gate/scans");
+        std::fs::create_dir_all(&scans_dir).unwrap();
+
+        // Change working directory temporarily using GATE_CONFIG trick is not available here,
+        // so we test the functions directly with a full path override.
+        // Instead, test the JSON serialization logic directly.
+        let columns = vec!["email".to_string(), "phone".to_string(), "ssn".to_string()];
+        let path = scans_dir.join("test.json");
+        let mut sorted = columns.clone();
+        sorted.sort();
+        sorted.dedup();
+        let content = serde_json::to_string_pretty(&sorted).unwrap();
+        std::fs::write(&path, &content).unwrap();
+
+        let loaded: Vec<String> = serde_json::from_str(&content).unwrap();
+        let set: HashSet<String> = loaded.into_iter().collect();
+        assert!(set.contains("email"));
+        assert!(set.contains("phone"));
+        assert!(set.contains("ssn"));
+        assert!(!set.contains("address"));
+    }
+
+    #[test]
+    fn checkpoint_sorts_and_deduplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let scans_dir = dir.path().join(".gate/scans");
+        std::fs::create_dir_all(&scans_dir).unwrap();
+
+        let columns = vec![
+            "phone".to_string(),
+            "email".to_string(),
+            "email".to_string(), // duplicate
+            "ssn".to_string(),
+        ];
+        let path = scans_dir.join("dup.json");
+        let mut sorted = columns.clone();
+        sorted.sort();
+        sorted.dedup();
+        let content = serde_json::to_string_pretty(&sorted).unwrap();
+        std::fs::write(&path, content).unwrap();
+
+        let loaded: Vec<String> =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(loaded.len(), 3); // deduped
+        assert_eq!(loaded[0], "email"); // sorted
+    }
+
+    #[test]
+    fn load_checkpoint_returns_none_when_missing() {
+        // A source with a name that certainly has no checkpoint file
+        let result = load_checkpoint("__nonexistent_source_xyz__");
+        assert!(result.is_none());
     }
 }

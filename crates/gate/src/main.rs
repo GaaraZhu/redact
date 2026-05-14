@@ -94,6 +94,14 @@ enum Commands {
         /// After showing results, interactively mark false-positive columns to add to the allowlist
         #[arg(long)]
         review: bool,
+        /// Name of the data source (e.g. "customers"). Saves a checkpoint to .gate/scans/<name>.json
+        /// for change detection. Use with --diff to show only new columns since the last scan.
+        #[arg(long)]
+        source: Option<String>,
+        /// Show only columns not seen in the previous scan for this source (requires --source).
+        /// On first scan, behaves like a normal scan and saves the initial checkpoint.
+        #[arg(long)]
+        diff: bool,
     },
     /// Manage the column allowlist — columns that skip name-based PII redaction.
     /// Value-based checks (Luhn, regex patterns) still apply to allowlisted columns.
@@ -170,7 +178,9 @@ fn main() {
             verbose,
             json,
             review,
-        } => scan::run(verbose, json, review),
+            source,
+            diff,
+        } => scan::run(verbose, json, review, source.as_deref(), diff),
         Commands::Allowlist { action } => match action {
             AllowlistAction::Add { columns } => allowlist::run(allowlist::Action::Add(columns)),
             AllowlistAction::Remove { columns } => {
