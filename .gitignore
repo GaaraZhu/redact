@@ -27,3 +27,6 @@ opencode.json
 dev/.venv/
 __pycache__/
 *.pyc
+
+# Test schema
+dev/scan_test_schema.json

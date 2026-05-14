@@ -731,7 +731,7 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
         if idx > 0 {
             println!();
         }
-        println!("  {}    {} columns", tier1, count);
+        println!("  {}    {} column(s)", tier1, count);
 
         if let Some(group) = tier1_groups.get(tier1) {
             let all_examples: Vec<String> = group
