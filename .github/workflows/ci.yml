@@ -24,3 +24,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - run: cargo clippy -- -D warnings
       - run: cargo test --all
+      - uses: rustsec/audit-check@v1
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
