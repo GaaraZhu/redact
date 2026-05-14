@@ -322,8 +322,9 @@ fn curl_has_silent_flag<'a>(mut args: impl Iterator<Item = &'a str>) -> bool {
 /// Rewrite a shell command string by injecting `-s` after each `curl` invocation
 /// that doesn't already have a silent flag.
 fn rewrite_curl_in_shell_str(s: &str) -> String {
-    use regex::Regex;
-    let re = Regex::new(r"\bcurl\b([^|;&\n]*)").unwrap();
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"\bcurl\b([^|;&\n]*)").unwrap());
     re.replace_all(s, |caps: &regex::Captures| {
         let after = &caps[1];
         if curl_has_silent_flag(after.split_whitespace()) {

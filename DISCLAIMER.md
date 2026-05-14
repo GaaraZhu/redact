@@ -2,7 +2,7 @@
 
 ## No Warranty
 
-`redact` is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. The authors make no representations or warranties regarding the accuracy, completeness, or reliability of the software or its ability to detect and redact any particular type of personally identifiable information (PII).
+`gate` is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. The authors make no representations or warranties regarding the accuracy, completeness, or reliability of the software or its ability to detect and redact any particular type of personally identifiable information (PII).
 
 ## Limitation of Liability
 
@@ -10,13 +10,13 @@ In no event shall the authors or copyright holders be liable for any claim, dama
 
 ## Use at Your Own Risk
 
-`redact` is a best-effort PII filtering tool. It does not guarantee that all sensitive data will be detected or redacted. You are solely responsible for:
+`gate` is a best-effort PII filtering tool. It does not guarantee that all sensitive data will be detected or redacted. You are solely responsible for:
 
-- Validating that `redact` meets your organisation's data privacy and compliance requirements before deploying it in any environment that processes real personal data.
+- Validating that `gate` meets your organisation's data privacy and compliance requirements before deploying it in any environment that processes real personal data.
 - Ensuring that your deployment, configuration, and toolchain do not create additional vectors for PII exposure.
 - Complying with all applicable laws and regulations, including but not limited to GDPR, HIPAA, CCPA, and any other data protection frameworks relevant to your jurisdiction.
 
-Do not rely solely on `redact` as your only safeguard against PII exposure. It is intended as one layer in a defence-in-depth security strategy, not as a complete compliance solution.
+Do not rely solely on `gate` as your only safeguard against PII exposure. It is intended as one layer in a defence-in-depth security strategy, not as a complete compliance solution.
 
 ## No Professional Advice
 
