@@ -59,6 +59,11 @@ pub struct ToolConfig {
     /// must accept `--sql <query>` and emit JSON consumable by Gate 2.
     #[serde(default)]
     pub json_tool: Option<String>,
+    /// When set, the flag value (from `sql_arg`) is parsed as JSON and the SQL
+    /// is extracted from this path (e.g. "statement" for Databricks).
+    /// Only applies when `sql_arg` is set but `json_tool` is not.
+    #[serde(default)]
+    pub json_sql_path: Option<String>,
     /// When set, the hook wraps this tool's command as `sh -c '<command> | <pipe>'`
     /// so Gate 2 always receives the piped output. Useful for tools like curl whose
     /// output is not JSON by default (e.g. `pipe: "jq -c ."`).

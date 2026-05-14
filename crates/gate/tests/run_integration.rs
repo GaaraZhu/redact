@@ -545,3 +545,36 @@ fn sql_flag_equals_form_parsed() {
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     assert_eq!(v["email"], "[PII:email]");
 }
+
+/// Databricks CLI: SQL is embedded in a JSON payload via `--json {"statement": "SELECT..."}`.
+/// Gate 1 extracts the SQL from the specified json_sql_path, then Gate 2 redacts the response.
+#[test]
+fn databricks_json_sql_path_extraction() {
+    let dir = tmp();
+    // Databricks API response with manifest schema and data
+    let tool = write_script(
+        &dir,
+        "fake-databricks",
+        r#"echo '{"manifest":{"schema":{"columns":[{"name":"customer_id","position":0,"type_name":"INT"},{"name":"email","position":1,"type_name":"STRING"}]}},"result":{"data_array":[["1001","alice@example.com"]]},"status":{"state":"SUCCEEDED"}}'"#,
+    );
+    let config = write_config(
+        &dir,
+        "tools:\n  fake-databricks:\n    sql_arg: \"--json\"\n    json_sql_path: \"statement\"\n",
+    );
+
+    let json_payload =
+        r#"{"statement":"SELECT customer_id, email FROM users","warehouse_id":"abc123"}"#;
+    let out = redact_run(&config, &tool, &["--json", json_payload]);
+
+    assert_eq!(exit_code(&out), 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    // Gate 2 redacts the email in the data_array
+    assert_eq!(
+        v["result"]["data_array"][0][0], "1001",
+        "customer_id should not be redacted"
+    );
+    assert_eq!(
+        v["result"]["data_array"][0][1], "[PII:email]",
+        "email should be redacted"
+    );
+}

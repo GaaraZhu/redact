@@ -1,7 +1,7 @@
 use common::config::Config;
 use common::error::exit_with_error;
 
-const RAW_CLIENTS: &[&str] = &["mysql", "psql"];
+const RAW_CLIENTS: &[&str] = &["mysql", "psql", "databricks"];
 const TOOLKIT_TOOLS: &[&str] = &["tkpsql", "tkdbr"];
 
 pub fn run() {
@@ -39,9 +39,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn raw_clients_constant_contains_mysql_psql() {
+    fn raw_clients_constant_contains_mysql_psql_databricks() {
         assert!(RAW_CLIENTS.contains(&"mysql"));
         assert!(RAW_CLIENTS.contains(&"psql"));
+        assert!(RAW_CLIENTS.contains(&"databricks"));
     }
 
     #[test]

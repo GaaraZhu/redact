@@ -200,21 +200,31 @@ fn redact_stdin(verbose: bool, config: &Config) {
 }
 
 fn build_gate1_plan(args: &[String], basename: &str, config: &Config) -> RedactPlan {
-    let sql_flag = match config
-        .tools
-        .get(basename)
-        .and_then(|t| t.sql_arg.as_deref())
-    {
+    let tool_cfg = match config.tools.get(basename) {
+        Some(t) => t,
+        None => return RedactPlan::empty(),
+    };
+
+    let sql_flag = match &tool_cfg.sql_arg {
         Some(f) => f,
         None => return RedactPlan::empty(),
     };
 
-    let sql = match find_flag_value(args, sql_flag) {
+    let flag_value = match find_flag_value(args, sql_flag) {
         Some(s) => s,
         None => return RedactPlan::empty(),
     };
 
-    let extraction = extract_columns(sql);
+    let sql = if let Some(json_path) = &tool_cfg.json_sql_path {
+        match extract_sql_from_json(flag_value, json_path) {
+            Some(s) => s,
+            None => return RedactPlan::empty(),
+        }
+    } else {
+        flag_value.to_string()
+    };
+
+    let extraction = extract_columns(&sql);
     build_plan(
         &extraction,
         &config.pii.action,
@@ -353,6 +363,23 @@ fn find_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     None
 }
 
+/// Extract SQL from a JSON string using a dot-separated path (e.g., "statement").
+/// Returns the extracted SQL string or None if parsing fails.
+fn extract_sql_from_json(json_str: &str, path: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let parts: Vec<&str> = path.split('.').collect();
+
+    let mut current = &value;
+    for part in parts {
+        current = &current[part];
+        if current.is_null() {
+            return None;
+        }
+    }
+
+    current.as_str().map(String::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,5 +442,33 @@ mod tests {
         let mut args = s(&["--query", "SELECT 1"]);
         inject_curl_silent("psql", &mut args);
         assert_eq!(args, s(&["--query", "SELECT 1"]));
+    }
+
+    #[test]
+    fn extract_sql_from_json_simple_field() {
+        let json = r#"{"statement": "SELECT email FROM users", "warehouse_id": "abc"}"#;
+        let sql = extract_sql_from_json(json, "statement");
+        assert_eq!(sql, Some("SELECT email FROM users".to_string()));
+    }
+
+    #[test]
+    fn extract_sql_from_json_missing_field() {
+        let json = r#"{"warehouse_id": "abc"}"#;
+        let sql = extract_sql_from_json(json, "statement");
+        assert_eq!(sql, None);
+    }
+
+    #[test]
+    fn extract_sql_from_json_invalid_json() {
+        let json = "not json";
+        let sql = extract_sql_from_json(json, "statement");
+        assert_eq!(sql, None);
+    }
+
+    #[test]
+    fn extract_sql_from_json_null_value() {
+        let json = r#"{"statement": null}"#;
+        let sql = extract_sql_from_json(json, "statement");
+        assert_eq!(sql, None);
     }
 }

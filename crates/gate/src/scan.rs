@@ -1295,7 +1295,7 @@ mod tests {
     #[test]
     fn json_report_categories_include_all_columns_not_capped() {
         // 5 different tables, same PII column — all 5 should appear in JSON
-        let pairs: Vec<(&str, &str)> = (0..5)
+        let _pairs: Vec<(&str, &str)> = (0..5)
             .map(|i| {
                 if i == 0 {
                     ("t0", "email")

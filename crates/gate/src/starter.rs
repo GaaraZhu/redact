@@ -12,6 +12,9 @@ tools:
     sql_arg: "--sql"
   tkmsql:
     sql_arg: "--sql"
+  databricks:
+    sql_arg: "--json"  # Databricks CLI sends SQL in a JSON payload
+    json_sql_path: "statement"  # Extract SQL from the "statement" field in the JSON
   psql:
     sql_arg: "-c"
     extra_args: ["--csv"]
