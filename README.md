@@ -408,7 +408,7 @@ brew uninstall gate
 
 ## Contributing
 
-Bug reports and pull requests are welcome. For significant changes, open an issue first to discuss the proposal. See [CLAUDE.md](CLAUDE.md) for the full dev setup and pre-commit checklist.
+Bug reports and pull requests are welcome. For significant changes, open an issue first to discuss the proposal. See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, pre-commit checklist, and safety rules for redaction changes.
 
 ## License
 
