@@ -639,9 +639,10 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
         _ => "",
     };
     let reset = "\x1b[0m";
+    let hdr = "\x1b[1;96m"; // bold bright-cyan for section headers
 
     // ── Header ────────────────────────────────────────────────────────────────
-    println!("\x1b[1mGate PII Scan\x1b[0m");
+    println!("{hdr}Gate PII Scan{reset}");
     println!("{}", "═".repeat(60));
     println!();
 
@@ -690,7 +691,7 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
     }
     tier1_totals.sort_by_key(|b| std::cmp::Reverse(b.1));
 
-    println!("\x1b[1mDetected Categories\x1b[0m");
+    println!("{hdr}Detected Categories{reset}");
     println!("{}", sep);
     println!(
         "  {:<cat_w$}  {:>7}   {:>6}  Sensitivity",
@@ -718,7 +719,7 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
     } else {
         "Top Findings"
     };
-    println!("\x1b[1m{}\x1b[0m", section_title);
+    println!("{hdr}{section_title}{reset}");
     println!("{}", sep);
 
     let findings_iter: Box<dyn Iterator<Item = _>> = if verbose {
@@ -756,12 +757,12 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
     println!();
 
     // ── Footer ────────────────────────────────────────────────────────────────
-    println!("\x1b[1mNote\x1b[0m");
+    println!("{hdr}Note{reset}");
     println!("  Scan detects PII by column name only. Gate 2 also");
     println!("  catches values in text/JSON columns at query time.");
     if !verbose {
         println!();
-        println!("\x1b[1mHint\x1b[0m");
+        println!("{hdr}Hint{reset}");
         println!("  Use --verbose to show all detected columns");
         println!("  Use --review to interactively mark false positives");
     }
@@ -796,7 +797,7 @@ fn run_review() {
     let existing = crate::allowlist::parse_current_allowlist(&content);
 
     println!();
-    println!("\x1b[1mAllowlist false positives\x1b[0m");
+    println!("\x1b[1;96mAllowlist false positives\x1b[0m");
     println!("{}", "─".repeat(59));
 
     // Prompt 1: add to allowlist
