@@ -1,6 +1,6 @@
 use mcp::intercept::{
-    extract_request_id, is_tools_call_request, is_tracked_tools_call_response, new_pending_calls,
-    redact_tools_call_response,
+    extract_request_id, is_tools_call_request, is_tracked_tools_call_response,
+    make_oversized_error, new_pending_calls, redact_tools_call_response,
 };
 use serde_json::{json, Value};
 
@@ -223,6 +223,37 @@ fn gate_summary_attached_to_result_on_redaction() {
     // _gate_summary is added to result by the redactor
     assert!(redacted["result"].get("_gate_summary").is_some());
     assert_eq!(redacted["result"]["_gate_summary"]["redacted"], 1);
+}
+
+// ── Oversized payload blocking ────────────────────────────────────────────────
+
+#[test]
+fn oversized_payload_returns_error_not_passthrough() {
+    let resp = json!({
+        "jsonrpc": "2.0",
+        "id": 42,
+        "result": {
+            "content": [{"type": "text", "text": "alice@example.com"}]
+        }
+    });
+    let size = serde_json::to_string(&resp).unwrap().len();
+    let error_resp = make_oversized_error(&resp, size, 10);
+    assert_eq!(error_resp["id"], 42);
+    assert!(
+        error_resp.get("result").is_none(),
+        "must not pass result through"
+    );
+    assert!(error_resp.get("error").is_some(), "must return an error");
+    assert_eq!(error_resp["error"]["code"], -32603);
+    let msg = error_resp["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("max_payload_bytes"));
+}
+
+#[test]
+fn oversized_error_preserves_string_id() {
+    let resp = json!({"jsonrpc": "2.0", "id": "req-xyz", "result": {}});
+    let error_resp = make_oversized_error(&resp, 9999, 100);
+    assert_eq!(error_resp["id"], "req-xyz");
 }
 
 // ── Passthrough for non-tools/call messages ───────────────────────────────────

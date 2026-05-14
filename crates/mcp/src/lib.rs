@@ -3,8 +3,8 @@ mod transport;
 
 use common::config::Config;
 use intercept::{
-    extract_request_id, is_tools_call_request, is_tracked_tools_call_response, new_pending_calls,
-    redact_tools_call_response,
+    extract_request_id, is_tools_call_request, is_tracked_tools_call_response,
+    make_oversized_error, new_pending_calls, redact_tools_call_response,
 };
 use std::io::{BufReader, BufWriter};
 use std::process::{Command, Stdio};
@@ -104,10 +104,10 @@ pub fn run(upstream: Vec<String>) -> ! {
                                 let size = serde_json::to_string(&v).map(|s| s.len()).unwrap_or(0);
                                 if size > max_payload_bytes {
                                     eprintln!(
-                                        "[gate-mcp] skipping redaction: payload {size} B \
+                                        "[gate-mcp] blocking oversized payload: {size} B \
                                          exceeds max_payload_bytes {max_payload_bytes} B"
                                     );
-                                    Message::Json(v)
+                                    Message::Json(make_oversized_error(&v, size, max_payload_bytes))
                                 } else {
                                     Message::Json(redact_tools_call_response(v, &config_clone))
                                 }

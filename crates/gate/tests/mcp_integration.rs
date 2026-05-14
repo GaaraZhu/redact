@@ -179,10 +179,10 @@ fn redact_tool_results_false_disables_redaction() {
 }
 
 #[test]
-fn oversized_payload_skips_redaction() {
+fn oversized_payload_returns_error() {
     let dir = tmp();
     let server = pii_server(&dir);
-    // 1-byte limit forces skip for any non-trivial response
+    // 1-byte limit forces the size check to trip for any non-trivial response
     let config = write_config(&dir, "mcp:\n  max_payload_bytes: 1\n");
 
     let init_req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
@@ -191,14 +191,20 @@ fn oversized_payload_skips_redaction() {
 
     let lines = send_and_collect(&server, &config, &[init_req, tool_req]);
     assert_eq!(lines.len(), 2);
+    // Must be an error response, not the raw payload
     assert!(
-        lines[1].contains("alice@example.com"),
-        "oversized payload should pass through unredacted; resp[1]={}",
+        lines[1].contains("\"error\""),
+        "oversized payload should return an error, not pass through; resp[1]={}",
         lines[1]
     );
     assert!(
-        !lines[1].contains("[PII:email]"),
-        "oversized payload was redacted unexpectedly; resp[1]={}",
+        !lines[1].contains("alice@example.com"),
+        "oversized payload leaked PII; resp[1]={}",
+        lines[1]
+    );
+    assert!(
+        lines[1].contains("max_payload_bytes"),
+        "error message should mention max_payload_bytes; resp[1]={}",
         lines[1]
     );
 }

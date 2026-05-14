@@ -52,6 +52,27 @@ pub fn is_tracked_tools_call_response(msg: &Value, pending: &PendingCalls) -> bo
     }
 }
 
+/// Build a JSON-RPC error response for a payload that exceeds `max_payload_bytes`.
+///
+/// Returning an error (rather than passing through) is the fail-closed behaviour:
+/// the agent sees an explicit failure and can retry with a smaller query, while PII
+/// in the oversized payload never reaches the model.
+pub fn make_oversized_error(msg: &Value, size: usize, limit: usize) -> Value {
+    let id = msg.get("id").cloned().unwrap_or(Value::Null);
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": -32603,
+            "message": format!(
+                "gate: payload {size} B exceeds max_payload_bytes {limit} B; \
+                 query blocked to prevent unredacted PII reaching the model — \
+                 reduce query size or raise max_payload_bytes in config"
+            )
+        }
+    })
+}
+
 /// Redact PII from a `tools/call` response.
 ///
 /// Runs Gate 2 over `result` (which contains `content[]`). The redactor's

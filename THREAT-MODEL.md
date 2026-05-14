@@ -128,10 +128,10 @@ pii:
   `resources/read`, `prompts/get`, and other MCP message types are forwarded without redaction.
   Most PII leakage paths go through `tools/call`, but this is a known gap.
 - **MCP payloads exceeding `max_payload_bytes`**: when a `tools/call` response is larger than the
-  configured `max_payload_bytes` threshold (default 5 MiB), the MCP proxy forwards it to the model
-  **without redaction** and emits a warning to stderr. A large file-read result or bulk data dump
-  from an MCP server will therefore pass PII through unredacted. Lower the threshold or split
-  queries to stay under it; do not rely on the MCP proxy for payloads you cannot bound in size.
+  configured `max_payload_bytes` threshold (default 5 MiB), the MCP proxy returns a JSON-RPC
+  error response to the agent instead of forwarding the payload. This is fail-closed: no data
+  reaches the model. The agent can retry with a smaller query. Raise `max_payload_bytes` in config
+  if you need to handle legitimately large payloads that you have verified contain no PII.
 - **`gate run` stdin mode**: when invoked with no arguments (`gate run` alone), Gate 1 is skipped
   and Gate 2 runs on the piped JSON with no SQL context.
 
