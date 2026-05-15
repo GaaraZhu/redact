@@ -702,7 +702,7 @@ fn print_report(pairs: &[(String, String)], stats: &[TieredCategoryResult], verb
     let risk_color = match risk_level {
         "CRITICAL" => "\x1b[31m",
         "HIGH" => "\x1b[33m",
-        "LOW" | "NONE" => "\x1b[32m",
+        "LOW" | "NONE" => "\x1b[38;5;40m", // 256-colour green, not theme-remappable
         _ => "",
     };
     let reset = "\x1b[0m";
