@@ -81,24 +81,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-
       - name: Install aarch64 cross-compilation toolchain
         if: matrix.cross_linker != ''
         run: |
           sudo apt-get update -q
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Add cargo to PATH
-        shell: bash
-        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
       - name: Build
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross_linker }}
-        run: cargo build --release --target ${{ matrix.target }}
+        run: "$HOME/.cargo/bin/cargo build --release --target ${{ matrix.target }}"
         shell: bash
 
       - name: Package (tar.gz)
