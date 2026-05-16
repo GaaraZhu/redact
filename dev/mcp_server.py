@@ -21,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 PG_HOST = os.environ.get("PG_HOST", "localhost")
 PG_PORT = int(os.environ.get("PG_PORT", "5432"))
-PG_DB   = os.environ.get("PG_DB",   "gate_demo")
+PG_DB   = os.environ.get("PG_DB",   "gatepay")
 PG_USER = os.environ.get("PG_USER", "gate")
 PG_PASS = os.environ.get("PG_PASS", "gate")
 

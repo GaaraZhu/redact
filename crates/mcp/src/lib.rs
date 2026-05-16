@@ -38,7 +38,7 @@ pub fn run(upstream: Vec<String>) -> ! {
         Config::default()
     });
     let max_payload_bytes = full_config.mcp.max_payload_bytes;
-    let redact_enabled = full_config.mcp.redact_tool_results;
+    let redact_enabled = full_config.enabled && full_config.mcp.redact_tool_results;
     let config = Arc::new(full_config.pii);
 
     let mut child = Command::new(&upstream[0])
