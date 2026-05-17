@@ -33,7 +33,7 @@ Also works with OpenCode — see [How it works](#how-it-works) for all supported
 
 ## Scan your schema
 
-Before installing the hook, use `gate scan` to assess how much PII your database schema exposes. Pipe the output of a schema query — one that returns `TABLE_NAME` and `COLUMN_NAME` — and gate prints a risk report across every table.
+Before installing the hook, use `gate scan` to assess how much PII your database schema exposes. Pipe the output of a schema query — one that returns `TABLE_NAME` and `COLUMN_NAME` — and gate prints a risk report across every table. No config is required; `gate scan` only uses built-in column-name detection. If you haven't created a config yet, run `gate config --init-only` first.
 
 ```bash
 # PostgreSQL (toolkit-managed)
@@ -52,57 +52,15 @@ databricks api post /api/2.0/sql/statements --profile <profile> --json "{\"state
 tkmsql query --sql "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS ORDER BY TABLE_NAME, ORDINAL_POSITION" | gate scan
 ```
 
-Example output:
+Risk level is weighted by category sensitivity — one SSN column matters more than twenty address columns. The command exits with code 1 if any PII columns are found, making it scriptable in CI audits. Pass `--verbose` to show all detected columns, or `--json` for machine-readable output.
 
-```
-Gate PII Scan
-───────────────────────────────────────────────────────────
+| Sensitivity | Categories | Risk floor |
+|-------------|-----------|------------|
+| **Critical** | Government IDs, Health & medical, Financial, Biometric | **HIGH** always; **CRITICAL** if ≥3 columns or >10% of schema |
+| **Elevated** | Contact, Names, Date of birth, Location of birth, Family & relationships, Employment | **HIGH** if >5% of schema; **CRITICAL** if >25% |
+| **Standard** | Address & location, Online & technical, Demographics | **HIGH** if >25% of schema |
 
-Summary
-  Tables scanned         12
-  Columns scanned        87
-
-  PII columns            34 (39.1%)
-  Non-PII columns        53 (60.9%)
-
-  Risk level         CRITICAL
-
-Detected Categories
-───────────────────────────────────────────────────────────
-  Names                   8  23.5%
-  Contact                 6  17.6%
-  Employment              5  14.7%
-  Government IDs          4  11.8%
-  Financial               3   8.8%
-
-Top Findings
-───────────────────────────────────────────────────────────
-Names
-  users.full_name
-  patients.first_name
-  patients.last_name
-  ... and 5 more
-
-Contact
-  users.email
-  customers.phone_number
-  orders.contact_email
-
-Government IDs
-  patients.ssn
-  employees.tax_id
-  employees.national_id
-
-Note
-  Scan detects PII by column name only. Gate 2 also
-  catches values in text/JSON columns at query time.
-
-Hint
-  Use --verbose to show all detected columns
-  Use --review to interactively mark false positives
-```
-
-Risk level is weighted by category sensitivity — one SSN column matters more than twenty address columns. The command exits with code 1 if any PII columns are found, making it scriptable in CI audits. Pass `--verbose` to show the full list of detected columns.
+> **Note:** `gate scan` detects PII by column name only. A LOW result means your column names look clean — it does not mean the data is safe. Gate 2 additionally inspects values at query time, catching PII in free-text, JSON, and ambiguously-named columns that scan cannot see.
 
 ### Handling false positives
 
@@ -119,16 +77,6 @@ Config updated: /Users/alice/.config/gate/config.yaml
 ```
 
 Allowlisted columns skip **name-based** redaction only. Gate 2 still checks their values against regex patterns and the Luhn credit-card algorithm. Manage the list directly with `gate allowlist add/remove/list`.
-
-| Sensitivity | Categories | Risk floor |
-|-------------|-----------|------------|
-| **Critical** | Government IDs, Health & medical, Financial, Biometric | **HIGH** always; **CRITICAL** if ≥3 columns or >10% of schema |
-| **Elevated** | Contact, Names, Date of birth, Location of birth, Family & relationships, Employment | **HIGH** if >5% of schema; **CRITICAL** if >25% |
-| **Standard** | Address & location, Online & technical, Demographics | **HIGH** if >25% of schema |
-
-> **Note:** `gate scan` detects PII by column name only. A LOW result means your column names look clean — it does not mean the data is safe. Gate 2 additionally inspects values at query time, catching PII in free-text, JSON, and ambiguously-named columns that scan cannot see.
-
-If you have not yet created a config, run `gate config --init-only` first to generate a starter config. No tools need to be configured to use `gate scan` — it only uses built-in column-name detection.
 
 ## Quickstart
 
