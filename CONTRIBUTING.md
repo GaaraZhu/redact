@@ -9,7 +9,7 @@ For significant changes, open an issue first to discuss the proposal. Small bug 
 ## Setup
 
 ```bash
-git clone https://github.com/garyzhu/gate
+git clone https://github.com/GaaraZhu/gate
 cd gate
 cargo build
 cargo test --all

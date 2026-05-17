@@ -23,7 +23,7 @@ jobs:
       - run: "$CARGO_HOME/bin/cargo fmt --check"
         if: matrix.os == 'ubuntu-latest'
         shell: bash
-      - run: "$CARGO_HOME/bin/cargo clippy -- -D warnings"
+      - run: "$CARGO_HOME/bin/cargo clippy --all-targets -- -D warnings"
         shell: bash
       - run: "$CARGO_HOME/bin/cargo test --all"
         shell: bash

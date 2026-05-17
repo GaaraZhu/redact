@@ -980,8 +980,8 @@ mod tests {
         let e = out["email"].as_str().unwrap();
         let ue = out["user_email"].as_str().unwrap();
         // Strip the type prefix to compare just the hash part.
-        let e_hash = e.split(':').last().unwrap().trim_end_matches(']');
-        let ue_hash = ue.split(':').last().unwrap().trim_end_matches(']');
+        let e_hash = e.split(':').next_back().unwrap().trim_end_matches(']');
+        let ue_hash = ue.split(':').next_back().unwrap().trim_end_matches(']');
         assert_eq!(e_hash, ue_hash, "same value must hash identically");
     }
 

@@ -154,6 +154,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::invalid_regex)]
     fn invalid_regex_fails() {
         assert!(Regex::new(r"[unclosed").is_err());
     }

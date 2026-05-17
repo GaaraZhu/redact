@@ -561,7 +561,7 @@ mod tests {
             plan.forced_columns.get("contact"),
             Some(&"email".to_string())
         );
-        assert!(plan.forced_columns.get("email").is_none());
+        assert!(!plan.forced_columns.contains_key("email"));
     }
 
     #[test]
