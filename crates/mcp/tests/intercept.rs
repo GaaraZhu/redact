@@ -103,7 +103,7 @@ fn json_text_content_is_redacted() {
         }
     });
 
-    let redacted = redact_tools_call_response(resp, &pii_config());
+    let redacted = redact_tools_call_response(resp, &pii_config(), None);
     let text_str = redacted["result"]["content"][0]["text"].as_str().unwrap();
     let parsed: Value = serde_json::from_str(text_str).unwrap();
     assert_eq!(parsed["email"], "[PII:email]");
@@ -121,7 +121,7 @@ fn raw_email_in_text_content_is_redacted() {
             "content": [{"type": "text", "text": "alice@example.com"}]
         }
     });
-    let redacted = redact_tools_call_response(resp, &pii_config());
+    let redacted = redact_tools_call_response(resp, &pii_config(), None);
     let text = redacted["result"]["content"][0]["text"].as_str().unwrap();
     assert_eq!(text, "[PII:email]");
 }
@@ -135,7 +135,7 @@ fn non_pii_text_passes_through_unchanged() {
             "content": [{"type": "text", "text": "Query returned 5 rows"}]
         }
     });
-    let redacted = redact_tools_call_response(resp, &pii_config());
+    let redacted = redact_tools_call_response(resp, &pii_config(), None);
     assert_eq!(
         redacted["result"]["content"][0]["text"],
         "Query returned 5 rows"
@@ -156,7 +156,7 @@ fn image_content_passes_through_unchanged() {
         }
     });
     let original_content = resp["result"]["content"].clone();
-    let redacted = redact_tools_call_response(resp, &pii_config());
+    let redacted = redact_tools_call_response(resp, &pii_config(), None);
     // Image item is unchanged
     assert_eq!(
         redacted["result"]["content"][0]["data"],
@@ -176,7 +176,7 @@ fn ssn_in_json_text_is_redacted() {
             }]
         }
     });
-    let redacted = redact_tools_call_response(resp, &pii_config());
+    let redacted = redact_tools_call_response(resp, &pii_config(), None);
     let text_str = redacted["result"]["content"][0]["text"].as_str().unwrap();
     let parsed: Value = serde_json::from_str(text_str).unwrap();
     assert_eq!(parsed["ssn"], "[PII:ssn]");
@@ -194,7 +194,7 @@ fn multiple_content_items_all_redacted() {
             ]
         }
     });
-    let redacted = redact_tools_call_response(resp, &pii_config());
+    let redacted = redact_tools_call_response(resp, &pii_config(), None);
     assert_eq!(redacted["result"]["content"][0]["text"], "[PII:email]");
     assert_eq!(redacted["result"]["content"][1]["text"], "[PII:email]");
 }
@@ -206,7 +206,7 @@ fn response_without_result_passes_through() {
         "id": 7,
         "error": {"code": -32601, "message": "method not found"}
     });
-    let redacted = redact_tools_call_response(resp.clone(), &pii_config());
+    let redacted = redact_tools_call_response(resp.clone(), &pii_config(), None);
     assert_eq!(redacted["error"]["code"], -32601);
 }
 
@@ -219,7 +219,7 @@ fn gate_summary_attached_to_result_on_redaction() {
             "content": [{"type": "text", "text": "alice@example.com"}]
         }
     });
-    let redacted = redact_tools_call_response(resp, &pii_config());
+    let redacted = redact_tools_call_response(resp, &pii_config(), None);
     // _gate_summary is added to result by the redactor
     assert!(redacted["result"].get("_gate_summary").is_some());
     assert_eq!(redacted["result"]["_gate_summary"]["redacted"], 1);

@@ -1,5 +1,6 @@
 use common::config::PiiConfig;
-use common::redactor::{redact, RedactPlan};
+use common::redactor::{redact_with_stats, RedactPlan};
+use common::stats;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -80,22 +81,42 @@ pub fn make_oversized_error(msg: &Value, size: usize, limit: usize) -> Value {
 /// checks catch PII in plain-text items. A `_gate_summary` block is attached
 /// to `result` by the existing `redact()` machinery.
 ///
+/// When `record_as = Some(server_name)`, also appends an event to the
+/// `gate retro` stats log labelled with that server name. Pass `None` to
+/// skip stats recording (used by tests; production callers pass the
+/// harness's logical server name).
+///
 /// Fails closed: if the redactor panics, returns an MCP error response.
-pub fn redact_tools_call_response(mut msg: Value, config: &PiiConfig) -> Value {
+pub fn redact_tools_call_response(
+    mut msg: Value,
+    config: &PiiConfig,
+    record_as: Option<&str>,
+) -> Value {
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     let msg_id = msg.get("id").cloned().unwrap_or(Value::Null);
 
     let redact_result = catch_unwind(AssertUnwindSafe(|| {
+        let mut stats_out = None;
         if let Some(result) = msg.get_mut("result") {
             let result_value = result.take();
-            *result = redact(result_value, &RedactPlan::empty(), config);
+            let (redacted, rs) = redact_with_stats(result_value, &RedactPlan::empty(), config);
+            *result = redacted;
+            stats_out = Some(rs);
         }
-        msg
+        (msg, stats_out)
     }));
 
     match redact_result {
-        Ok(redacted) => redacted,
+        Ok((redacted, stats_out)) => {
+            if let (Some(server_name), Some(rs)) = (record_as, stats_out) {
+                if rs.total > 0 {
+                    let event = stats::Event::now("mcp", server_name, rs.total, rs.type_counts);
+                    let _ = stats::record(&event);
+                }
+            }
+            redacted
+        }
         Err(_) => {
             eprintln!("[gate-mcp] redaction panicked; failing closed");
             serde_json::json!({

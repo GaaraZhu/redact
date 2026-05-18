@@ -14,6 +14,8 @@ pub struct Config {
     pub pii: PiiConfig,
     #[serde(default)]
     pub mcp: McpConfig,
+    #[serde(default)]
+    pub stats: StatsConfig,
 }
 
 impl Default for Config {
@@ -23,7 +25,23 @@ impl Default for Config {
             tools: HashMap::new(),
             pii: PiiConfig::default(),
             mcp: McpConfig::default(),
+            stats: StatsConfig::default(),
         }
+    }
+}
+
+/// Controls whether `gate retro` collects per-event counts on disk.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct StatsConfig {
+    /// When false, `gate run` and `gate mcp` skip writing to the stats log.
+    /// `gate retro` still reads any pre-existing log.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for StatsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 
@@ -408,6 +426,18 @@ pii:
         let config = load_from_yaml("mcp:\n  redact_tool_results: false\n").unwrap();
         assert!(!config.mcp.redact_tool_results);
         assert_eq!(config.mcp.max_payload_bytes, 5 * 1024 * 1024);
+    }
+
+    #[test]
+    fn stats_defaults_enabled() {
+        let config = load_missing().unwrap();
+        assert!(config.stats.enabled);
+    }
+
+    #[test]
+    fn stats_can_be_disabled() {
+        let config = load_from_yaml("stats:\n  enabled: false\n").unwrap();
+        assert!(!config.stats.enabled);
     }
 
     #[test]

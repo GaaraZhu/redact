@@ -9,6 +9,7 @@ mod init;
 mod init_opencode;
 mod list;
 mod protect;
+mod retro;
 mod run;
 mod scan;
 mod starter;
@@ -103,9 +104,13 @@ enum Commands {
         action: AllowlistAction,
     },
     /// Run a stdio MCP proxy: intercepts tools/call responses and redacts PII.
-    /// Usage: gate mcp [--] <upstream-cmd> [args...]
-    /// Example: gate mcp -- uvx mcp-server-postgres
+    /// Usage: gate mcp [--name <server>] [--] <upstream-cmd> [args...]
+    /// Example: gate mcp --name postgres -- uvx mcp-server-postgres
     Mcp {
+        /// Logical server name used in `gate retro` stats. Defaults to the upstream
+        /// binary basename when omitted.
+        #[arg(long)]
+        name: Option<String>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         upstream: Vec<String>,
     },
@@ -123,6 +128,9 @@ enum Commands {
     Unprotect,
     /// Remove the hook, config directory, and any gate-generated opencode plugins
     Uninstall,
+    /// Show a protection retrospective: how many queries gate protected and how
+    /// many PII fields it redacted (also known as stats/audit/report).
+    Retro,
     /// Print version
     Version,
 }
@@ -185,14 +193,14 @@ fn main() {
             }
             AllowlistAction::List => allowlist::run(allowlist::Action::List),
         },
-        Commands::Mcp { upstream } => {
+        Commands::Mcp { name, upstream } => {
             // Strip a leading "--" separator if clap passed it through
             let upstream = if upstream.first().map(String::as_str) == Some("--") {
                 upstream[1..].to_vec()
             } else {
                 upstream
             };
-            mcp::run(upstream)
+            mcp::run(name, upstream)
         }
         Commands::Validate => validate::run(),
         Commands::Enable => enable_disable::run(true),
@@ -200,6 +208,7 @@ fn main() {
         Commands::Protect => protect::protect(),
         Commands::Unprotect => protect::unprotect(),
         Commands::Uninstall => uninstall::run(),
+        Commands::Retro => retro::run(),
         Commands::Version => println!("{}", env!("CARGO_PKG_VERSION")),
     }
 }

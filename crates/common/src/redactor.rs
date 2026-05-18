@@ -56,6 +56,7 @@ enum Shape {
 struct RedactSummary {
     redacted: usize,
     types: BTreeSet<String>,
+    type_counts: HashMap<String, usize>,
     warnings: Vec<String>,
 }
 
@@ -64,6 +65,7 @@ impl RedactSummary {
         Self {
             redacted: 0,
             types: BTreeSet::new(),
+            type_counts: HashMap::new(),
             warnings: Vec::new(),
         }
     }
@@ -78,15 +80,42 @@ impl RedactSummary {
     }
 }
 
+/// Aggregate stats returned alongside the redacted payload by [`redact_with_stats`].
+///
+/// Carries the same totals that appear in `_gate_summary` plus a per-type
+/// breakdown that the public summary does not currently expose. Stable across
+/// hashing-on/off — values use the bare PII type label, never the suffixed form.
+#[derive(Debug, Default, Clone)]
+pub struct RedactStats {
+    /// Total fields redacted in this run.
+    pub total: usize,
+    /// Per-PII-type counts. Keys are bare type labels (e.g. `"email"`).
+    pub type_counts: HashMap<String, usize>,
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Redact `payload` using `plan` (from Gate 1) and `config`.
 /// Returns the redacted JSON with `_gate_summary` attached according to payload shape.
 /// Error-shaped payloads (`{"error": ...}`) are returned unchanged.
+///
+/// Convenience wrapper around [`redact_with_stats`] for callers that don't
+/// need per-type counts.
 pub fn redact(payload: Value, plan: &RedactPlan, config: &PiiConfig) -> Value {
+    redact_with_stats(payload, plan, config).0
+}
+
+/// Same as [`redact`] but also returns aggregate counts ([`RedactStats`]) so
+/// callers (e.g. the `gate retro` stats logger) can record per-type breakdowns
+/// without re-scanning the output.
+pub fn redact_with_stats(
+    payload: Value,
+    plan: &RedactPlan,
+    config: &PiiConfig,
+) -> (Value, RedactStats) {
     let shape = detect_shape(&payload);
     if shape == Shape::Error {
-        return payload;
+        return (payload, RedactStats::default());
     }
 
     let patterns = CompiledPattern::from_config(&config.patterns);
@@ -127,7 +156,12 @@ pub fn redact(payload: Value, plan: &RedactPlan, config: &PiiConfig) -> Value {
         summary.warnings.push(w.clone());
     }
 
-    apply_summary(redacted_payload, &summary, config.include_summary, &shape)
+    let stats = RedactStats {
+        total: summary.redacted,
+        type_counts: summary.type_counts.clone(),
+    };
+    let value = apply_summary(redacted_payload, &summary, config.include_summary, &shape);
+    (value, stats)
 }
 
 // ── Shape detection ───────────────────────────────────────────────────────────
@@ -528,6 +562,7 @@ fn do_redact(
 ) -> Value {
     summary.redacted += 1;
     summary.types.insert(pii_type.to_string());
+    *summary.type_counts.entry(pii_type.to_string()).or_insert(0) += 1;
     let type_token = if config.hash_values {
         let h = hash_value(&config.hash_salt, original);
         format!("{}:{}", pii_type, h)
@@ -586,6 +621,34 @@ mod tests {
 
     fn plan() -> RedactPlan {
         RedactPlan::empty()
+    }
+
+    // ── 0. redact_with_stats exposes per-type counts ──────────────────────────
+
+    #[test]
+    fn redact_with_stats_returns_per_type_counts() {
+        let input = json!({
+            "rows": [
+                {"email": "a@b.com", "phone": "+1-555-123-4567"},
+                {"email": "c@d.com", "phone": "+1-555-987-6543"},
+                {"email": "e@f.com", "ssn": "123-45-6789"},
+            ]
+        });
+        let (out, stats) = redact_with_stats(input, &plan(), &cfg());
+        assert_eq!(stats.total, 3 + 2 + 1);
+        assert_eq!(stats.type_counts.get("email"), Some(&3));
+        assert_eq!(stats.type_counts.get("phone"), Some(&2));
+        assert_eq!(stats.type_counts.get("ssn"), Some(&1));
+        // Existing `_gate_summary` shape is unchanged.
+        assert_eq!(out["_gate_summary"]["redacted"], 6);
+    }
+
+    #[test]
+    fn redact_with_stats_empty_when_no_pii() {
+        let input = json!({"rows": [{"id": 1, "qty": 42}]});
+        let (_, stats) = redact_with_stats(input, &plan(), &cfg());
+        assert_eq!(stats.total, 0);
+        assert!(stats.type_counts.is_empty());
     }
 
     // ── 1. tkpsql object shape ────────────────────────────────────────────────

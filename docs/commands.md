@@ -22,4 +22,5 @@ Full reference for every `gate` subcommand. Use `gate --help` and `gate <subcomm
 | `gate allowlist remove <col> [col...]` | Remove column names from the allowlist. |
 | `gate allowlist list` | Show the current allowlist. |
 | `gate run [--verbose] [-- <cmd>]` | Run a command through the redaction pipeline, or pipe JSON from stdin for direct Gate 2 inspection. Normally invoked by the hook; run manually to test. `--verbose` prints each field's Gate 2 decision to stderr. |
+| `gate retro` | Protection retrospective (a.k.a. stats / audit / report). Prints how many queries gate protected and how many PII fields it redacted, with a top-types breakdown. Reads from the on-disk stats log; disable collection with `stats.enabled: false` in config. |
 | `gate hook` | *(internal)* Hook entry point — invoked by the harness, not directly. |

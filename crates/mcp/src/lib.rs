@@ -27,7 +27,12 @@ fn forward_sigterm(_pid: u32) {}
 /// Entry point for `gate mcp`. Spawns `upstream` as a child process, wires
 /// agent stdio ↔ upstream stdio, and redacts PII from `tools/call` responses
 /// before they reach the agent. Never returns normally.
-pub fn run(upstream: Vec<String>) -> ! {
+///
+/// `name` is the harness's logical name for the server (e.g. `"postgres"`),
+/// used to label `gate retro` stats events. When `None`, falls back to the
+/// upstream command's basename so existing hand-edited configs still produce
+/// a usable label.
+pub fn run(name: Option<String>, upstream: Vec<String>) -> ! {
     if upstream.is_empty() {
         eprintln!("[gate-mcp] no upstream command specified");
         std::process::exit(1);
@@ -39,7 +44,10 @@ pub fn run(upstream: Vec<String>) -> ! {
     });
     let max_payload_bytes = full_config.mcp.max_payload_bytes;
     let redact_enabled = full_config.enabled && full_config.mcp.redact_tool_results;
+    let stats_enabled = full_config.enabled && full_config.stats.enabled;
     let config = Arc::new(full_config.pii);
+
+    let server_name = Arc::new(name.unwrap_or_else(|| derive_server_name(&upstream)));
 
     let mut child = Command::new(&upstream[0])
         .args(&upstream[1..])
@@ -65,6 +73,7 @@ pub fn run(upstream: Vec<String>) -> ! {
     let pending = new_pending_calls();
     let pending_clone = Arc::clone(&pending);
     let config_clone = Arc::clone(&config);
+    let server_name_clone = Arc::clone(&server_name);
 
     // Thread 1: agent stdin → upstream stdin (track tools/call request IDs)
     let t1 = thread::spawn(move || {
@@ -109,7 +118,16 @@ pub fn run(upstream: Vec<String>) -> ! {
                                     );
                                     Message::Json(make_oversized_error(&v, size, max_payload_bytes))
                                 } else {
-                                    Message::Json(redact_tools_call_response(v, &config_clone))
+                                    let record_as = if stats_enabled {
+                                        Some(server_name_clone.as_str())
+                                    } else {
+                                        None
+                                    };
+                                    Message::Json(redact_tools_call_response(
+                                        v,
+                                        &config_clone,
+                                        record_as,
+                                    ))
                                 }
                             } else {
                                 Message::Json(v)
@@ -130,4 +148,61 @@ pub fn run(upstream: Vec<String>) -> ! {
 
     let exit_code = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
     std::process::exit(exit_code);
+}
+
+/// Derive a stats label from the upstream command when `--name` is not supplied.
+/// Strips any path prefix and a common `mcp-server-` prefix so e.g.
+/// `["uvx", "mcp-server-postgres"]` yields `postgres`.
+fn derive_server_name(upstream: &[String]) -> String {
+    let raw = upstream
+        .iter()
+        .find(|s| !s.is_empty() && !s.starts_with('-'))
+        .map(String::as_str)
+        .unwrap_or("mcp");
+    // Prefer the last positional argument (typically the actual server binary)
+    // when the first token is a wrapper like `uvx`, `npx`, `python -m`.
+    let candidate = match upstream.iter().rev().find(|s| !s.starts_with('-')) {
+        Some(s) if s != raw => s.as_str(),
+        _ => raw,
+    };
+    let basename = std::path::Path::new(candidate)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(candidate);
+    basename
+        .strip_prefix("mcp-server-")
+        .unwrap_or(basename)
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|&x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn derive_name_strips_mcp_server_prefix() {
+        assert_eq!(
+            derive_server_name(&s(&["uvx", "mcp-server-postgres"])),
+            "postgres"
+        );
+        assert_eq!(
+            derive_server_name(&s(&["npx", "mcp-server-github"])),
+            "github"
+        );
+    }
+
+    #[test]
+    fn derive_name_falls_back_to_basename() {
+        assert_eq!(derive_server_name(&s(&["postgres-mcp"])), "postgres-mcp");
+        assert_eq!(derive_server_name(&s(&["/usr/local/bin/foo"])), "foo");
+    }
+
+    #[test]
+    fn derive_name_handles_empty() {
+        assert_eq!(derive_server_name(&s(&[])), "mcp");
+    }
 }

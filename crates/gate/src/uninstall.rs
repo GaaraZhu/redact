@@ -5,6 +5,7 @@ use crate::init_opencode::{has_gate_header, plugin_path};
 use common::config::config_path;
 use common::error::exit_with_error;
 use common::harness::is_agent_harness;
+use common::stats::stats_path;
 use serde_json::Value;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ enum Action {
     ConfigDir(PathBuf),
     Plugin(PathBuf),
     CopilotHook(PathBuf),
+    StatsFile(PathBuf),
 }
 
 impl Action {
@@ -24,6 +26,7 @@ impl Action {
             Action::ConfigDir(p) => format!("Delete config directory {}", p.display()),
             Action::Plugin(p) => format!("Delete opencode plugin {}", p.display()),
             Action::CopilotHook(p) => format!("Remove gate hook entry from {}", p.display()),
+            Action::StatsFile(p) => format!("Delete stats log {}", p.display()),
         }
     }
 }
@@ -78,8 +81,20 @@ fn collect_actions() -> Vec<Action> {
             actions.push(a);
         }
     }
+    if let Some(a) = plan_remove_stats() {
+        actions.push(a);
+    }
 
     actions
+}
+
+fn plan_remove_stats() -> Option<Action> {
+    let path = stats_path().ok()?;
+    if path.exists() {
+        Some(Action::StatsFile(path))
+    } else {
+        None
+    }
 }
 
 fn plan_remove_hook(scope: &str) -> Option<Action> {
@@ -171,6 +186,10 @@ fn execute_action(action: &Action) {
         },
         Action::Plugin(path) => match std::fs::remove_file(path) {
             Ok(()) => println!("Deleted opencode plugin {}", path.display()),
+            Err(e) => eprintln!("gate: failed to remove {}: {e}", path.display()),
+        },
+        Action::StatsFile(path) => match std::fs::remove_file(path) {
+            Ok(()) => println!("Deleted stats log {}", path.display()),
             Err(e) => eprintln!("gate: failed to remove {}: {e}", path.display()),
         },
         Action::CopilotHook(path) => {

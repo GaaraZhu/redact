@@ -263,8 +263,13 @@ fn register_mcp_server(path: &Path, server_name: &str, cmd_str: &str) {
         Err(e) => exit_with_error(&format!("invalid --mcp-cmd: {e}")),
     };
 
-    // gate mcp -- <upstream parts...>
-    let mut args: Vec<Value> = vec![json!("mcp"), json!("--")];
+    // gate mcp --name <server> -- <upstream parts...>
+    let mut args: Vec<Value> = vec![
+        json!("mcp"),
+        json!("--name"),
+        json!(server_name),
+        json!("--"),
+    ];
     args.extend(upstream_parts.iter().map(|s| json!(s)));
 
     let server_entry = json!({
@@ -360,7 +365,13 @@ fn register_mcp_server_opencode(path: &Path, server_name: &str, cmd_str: &str) {
         Err(e) => exit_with_error(&format!("invalid --mcp-cmd: {e}")),
     };
 
-    let mut command: Vec<Value> = vec![json!("gate"), json!("mcp"), json!("--")];
+    let mut command: Vec<Value> = vec![
+        json!("gate"),
+        json!("mcp"),
+        json!("--name"),
+        json!(server_name),
+        json!("--"),
+    ];
     command.extend(upstream_parts.iter().map(|s| json!(s)));
 
     let server_entry = json!({
@@ -483,8 +494,8 @@ fn wrap_mcp_claude(path: &Path, filter: Option<&[String]>, apply: bool) {
 
     let mut updated = settings.clone();
     for (name, cmd, args) in &to_wrap {
-        let new_args: Vec<Value> = std::iter::once(json!("mcp"))
-            .chain(std::iter::once(json!("--")))
+        let new_args: Vec<Value> = [json!("mcp"), json!("--name"), json!(name), json!("--")]
+            .into_iter()
             .chain(std::iter::once(json!(cmd)))
             .chain(args.iter().map(|s| json!(s)))
             .collect();
@@ -551,12 +562,17 @@ fn wrap_mcp_opencode(path: &Path, filter: Option<&[String]>, apply: bool) {
 
     let mut updated = settings.clone();
     for (name, cmd, args) in &to_wrap {
-        let new_command: Vec<Value> = std::iter::once(json!("gate"))
-            .chain(std::iter::once(json!("mcp")))
-            .chain(std::iter::once(json!("--")))
-            .chain(std::iter::once(json!(cmd)))
-            .chain(args.iter().map(|s| json!(s)))
-            .collect();
+        let new_command: Vec<Value> = [
+            json!("gate"),
+            json!("mcp"),
+            json!("--name"),
+            json!(name),
+            json!("--"),
+        ]
+        .into_iter()
+        .chain(std::iter::once(json!(cmd)))
+        .chain(args.iter().map(|s| json!(s)))
+        .collect();
         if let Some(entry) = updated["mcp"][name.as_str()].as_object_mut() {
             entry.insert("command".to_string(), Value::Array(new_command));
         }
@@ -614,7 +630,8 @@ fn print_wrap_plan(
         } else {
             format!("{} {}", cmd, args.join(" "))
         };
-        let after_parts: Vec<&str> = std::iter::once("gate mcp --")
+        let header = format!("gate mcp --name {name} --");
+        let after_parts: Vec<&str> = std::iter::once(header.as_str())
             .chain(std::iter::once(cmd.as_str()))
             .chain(args.iter().map(String::as_str))
             .collect();
@@ -1028,8 +1045,10 @@ mod tests {
         assert_eq!(v["mcpServers"]["postgres"]["command"], "gate");
         let args = v["mcpServers"]["postgres"]["args"].as_array().unwrap();
         assert_eq!(args[0], "mcp");
-        assert_eq!(args[1], "--");
-        assert_eq!(args[2], "uvx");
+        assert_eq!(args[1], "--name");
+        assert_eq!(args[2], "postgres");
+        assert_eq!(args[3], "--");
+        assert_eq!(args[4], "uvx");
     }
 
     #[test]
@@ -1054,8 +1073,10 @@ mod tests {
         assert_eq!(v["mcpServers"]["postgres"]["command"], "gate");
         let args = v["mcpServers"]["postgres"]["args"].as_array().unwrap();
         assert_eq!(args[0], "mcp");
-        assert_eq!(args[1], "--");
-        assert_eq!(args[2], "uvx");
+        assert_eq!(args[1], "--name");
+        assert_eq!(args[2], "postgres");
+        assert_eq!(args[3], "--");
+        assert_eq!(args[4], "uvx");
     }
 
     #[test]
@@ -1091,8 +1112,10 @@ mod tests {
         let cmd = v["mcp"]["postgres"]["command"].as_array().unwrap();
         assert_eq!(cmd[0], "gate");
         assert_eq!(cmd[1], "mcp");
-        assert_eq!(cmd[2], "--");
-        assert_eq!(cmd[3], "uvx");
+        assert_eq!(cmd[2], "--name");
+        assert_eq!(cmd[3], "postgres");
+        assert_eq!(cmd[4], "--");
+        assert_eq!(cmd[5], "uvx");
     }
 
     #[test]
@@ -1116,10 +1139,12 @@ mod tests {
         register_mcp_server_opencode(&path, "pg", "uvx mcp-server-postgres --db mydb");
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let cmd = v["mcp"]["pg"]["command"].as_array().unwrap();
-        // gate, mcp, --, uvx, mcp-server-postgres, --db, mydb
-        assert_eq!(cmd.len(), 7);
-        assert_eq!(cmd[5], "--db");
-        assert_eq!(cmd[6], "mydb");
+        // gate, mcp, --name, pg, --, uvx, mcp-server-postgres, --db, mydb
+        assert_eq!(cmd.len(), 9);
+        assert_eq!(cmd[2], "--name");
+        assert_eq!(cmd[3], "pg");
+        assert_eq!(cmd[7], "--db");
+        assert_eq!(cmd[8], "mydb");
     }
 
     // is_gate_hook_variant
@@ -1192,11 +1217,13 @@ mod tests {
         assert_eq!(v["mcpServers"]["postgres"]["command"], "gate");
         let args = v["mcpServers"]["postgres"]["args"].as_array().unwrap();
         assert_eq!(args[0], "mcp");
-        assert_eq!(args[1], "--");
-        assert_eq!(args[2], "uvx");
-        assert_eq!(args[3], "mcp-server-postgres");
-        assert_eq!(args[4], "--db");
-        assert_eq!(args[5], "mydb");
+        assert_eq!(args[1], "--name");
+        assert_eq!(args[2], "postgres");
+        assert_eq!(args[3], "--");
+        assert_eq!(args[4], "uvx");
+        assert_eq!(args[5], "mcp-server-postgres");
+        assert_eq!(args[6], "--db");
+        assert_eq!(args[7], "mydb");
     }
 
     #[test]
@@ -1266,8 +1293,10 @@ mod tests {
         let cmd = v["mcp"]["github"]["command"].as_array().unwrap();
         assert_eq!(cmd[0], "gate");
         assert_eq!(cmd[1], "mcp");
-        assert_eq!(cmd[2], "--");
-        assert_eq!(cmd[3], "npx");
+        assert_eq!(cmd[2], "--name");
+        assert_eq!(cmd[3], "github");
+        assert_eq!(cmd[4], "--");
+        assert_eq!(cmd[5], "npx");
         // already-proxied entry unchanged
         let proxied_cmd = v["mcp"]["proxied"]["command"].as_array().unwrap();
         assert_eq!(proxied_cmd[3], "uvx");

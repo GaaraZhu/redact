@@ -3,7 +3,8 @@ use std::io::{self, Read, Write};
 use crate::command;
 use common::config::Config;
 use common::error::exit_with_error;
-use common::redactor::{redact, RedactPlan};
+use common::redactor::{redact_with_stats, RedactPlan};
+use common::stats;
 use gate1::{build_plan, extract_columns};
 
 pub fn run(args: Vec<String>, verbose: bool) {
@@ -151,7 +152,17 @@ pub fn run(args: Vec<String>, verbose: bool) {
     };
 
     // Gate 2
-    let redacted = redact(payload, &plan, &config.pii);
+    let (redacted, redact_stats) = redact_with_stats(payload, &plan, &config.pii);
+
+    if config.stats.enabled {
+        let event = stats::Event::now(
+            "bash",
+            &basename,
+            redact_stats.total,
+            redact_stats.type_counts,
+        );
+        let _ = stats::record(&event);
+    }
 
     println!("{}", serde_json::to_string(&redacted).unwrap());
 }
@@ -185,7 +196,18 @@ fn redact_stdin(verbose: bool, config: &Config) {
         }
     };
 
-    let redacted = redact(payload, &plan, &config.pii);
+    let (redacted, redact_stats) = redact_with_stats(payload, &plan, &config.pii);
+
+    if config.stats.enabled {
+        let event = stats::Event::now(
+            "bash",
+            "stdin",
+            redact_stats.total,
+            redact_stats.type_counts,
+        );
+        let _ = stats::record(&event);
+    }
+
     println!("{}", serde_json::to_string(&redacted).unwrap());
 }
 
