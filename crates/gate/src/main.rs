@@ -35,8 +35,10 @@ enum Commands {
         #[arg(long, default_value = "claude-code")]
         format: String,
     },
-    /// Execute a tool with Gate 1 + Gate 2 PII redaction on its JSON output.
-    /// With no args, reads JSON from stdin and applies Gate 2 directly.
+    #[command(
+        about = "Execute a tool with Gate 1 + Gate 2 PII redaction on its JSON output.\n  \
+                       With no args, reads JSON from stdin and applies Gate 2 directly"
+    )]
     Run {
         /// Print per-field redaction decisions to stderr for debugging
         #[arg(long)]
@@ -44,8 +46,10 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Register the PreToolUse hook in the agent harness settings.
-    /// With --mcp, registers a gate mcp proxy entry for an MCP server instead.
+    #[command(
+        about = "Register the PreToolUse hook in the agent harness settings.\n  \
+                       With --mcp, registers a gate mcp proxy entry for an MCP server instead"
+    )]
     Init {
         /// Target harness: claude-code (default) or opencode
         #[arg(long, default_value = "claude-code")]
@@ -83,9 +87,11 @@ enum Commands {
     },
     /// List configured tools and their sql_arg values
     List,
-    /// Read columnar JSON from stdin and report PII-exposed column names.
-    /// Pipe the output of a schema query (SELECT TABLE_NAME, COLUMN_NAME ...) into this command.
-    /// Example: tkdbr query --sql "SELECT TABLE_NAME, COLUMN_NAME FROM ..." | gate scan
+    #[command(
+        about = "Read columnar JSON from stdin and report PII-exposed column names.\n  \
+                       Pipe the output of a schema query (SELECT TABLE_NAME, COLUMN_NAME ...) into this command.\n  \
+                       Example: tkdbr query --sql \"SELECT TABLE_NAME, COLUMN_NAME FROM ...\" | gate scan"
+    )]
     Scan {
         /// Show all detected columns in the Top Findings section (not truncated)
         #[arg(long)]
@@ -97,15 +103,19 @@ enum Commands {
         #[arg(long)]
         review: bool,
     },
-    /// Manage the column allowlist — columns that skip name-based PII redaction.
-    /// Value-based checks (Luhn, regex patterns) still apply to allowlisted columns.
+    #[command(
+        about = "Manage the column allowlist — columns that skip name-based PII redaction.\n  \
+                       Value-based checks (Luhn, regex patterns) still apply to allowlisted columns"
+    )]
     Allowlist {
         #[command(subcommand)]
         action: AllowlistAction,
     },
-    /// Run a stdio MCP proxy: intercepts tools/call responses and redacts PII.
-    /// Usage: gate mcp [--name <server>] [--] <upstream-cmd> [args...]
-    /// Example: gate mcp --name postgres -- uvx mcp-server-postgres
+    #[command(
+        about = "Run a stdio MCP proxy: intercepts tools/call responses and redacts PII.\n  \
+                       Usage: gate mcp [--name <server>] [--] <upstream-cmd> [args...]\n  \
+                       Example: gate mcp --name postgres -- uvx mcp-server-postgres"
+    )]
     Mcp {
         /// Logical server name used in `gate retro` stats. Defaults to the upstream
         /// binary basename when omitted.
@@ -120,16 +130,22 @@ enum Commands {
     Enable,
     /// Disable PII redaction (sets enabled: false in config)
     Disable,
-    /// Protect the config file by transferring ownership to root (Unix only).
-    /// After this, all config changes require sudo. Run as: sudo gate protect
+    #[command(
+        about = "Protect the config file by transferring ownership to root (Unix only).\n  \
+                       After this, all config changes require sudo. Run as: sudo gate protect"
+    )]
     Protect,
-    /// Remove root ownership from the config file, restoring direct write access.
-    /// Run as: sudo gate unprotect
+    #[command(
+        about = "Remove root ownership from the config file, restoring direct write access.\n  \
+                       Run as: sudo gate unprotect"
+    )]
     Unprotect,
     /// Remove the hook, config directory, and any gate-generated opencode plugins
     Uninstall,
-    /// Show a protection retrospective: how many queries gate protected and how
-    /// many PII fields it redacted (also known as stats/audit/report).
+    #[command(
+        about = "Show a protection retrospective: how many queries gate protected and how\n  \
+                       many PII fields it redacted (also known as stats/audit/report)"
+    )]
     Retro,
     /// Print version
     Version,
