@@ -30,7 +30,7 @@ pub fn run(enabled: bool) {
         println!("gate enabled. PII redaction is ON.");
     } else {
         println!("gate disabled. PII redaction is OFF.");
-        println!("Run `gate enable` or unset GATE_DISABLED to re-enable.");
+        println!("Run `gate enable` to re-enable.");
     }
 }
 

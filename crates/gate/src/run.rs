@@ -6,12 +6,6 @@ use common::error::exit_with_error;
 use common::redactor::{redact, RedactPlan};
 use gate1::{build_plan, extract_columns};
 
-fn is_disabled_by_env() -> bool {
-    std::env::var("GATE_DISABLED")
-        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false)
-}
-
 pub fn run(args: Vec<String>, verbose: bool) {
     let config = match Config::load() {
         Ok(c) => c,
@@ -22,7 +16,7 @@ pub fn run(args: Vec<String>, verbose: bool) {
 
     // Stdin mode: no command args — read JSON from stdin and apply Gate 2 directly.
     if args.is_empty() {
-        if !config.enabled || is_disabled_by_env() {
+        if !config.enabled {
             io::copy(&mut io::stdin(), &mut io::stdout()).ok();
             return;
         }
@@ -30,8 +24,8 @@ pub fn run(args: Vec<String>, verbose: bool) {
         return;
     }
 
-    // When redaction is disabled (config or env var), act as a transparent passthrough.
-    if !config.enabled || is_disabled_by_env() {
+    // When redaction is disabled via config, act as a transparent passthrough.
+    if !config.enabled {
         passthrough(args);
         return;
     }

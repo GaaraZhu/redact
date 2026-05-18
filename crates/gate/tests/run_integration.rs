@@ -360,34 +360,6 @@ fn disabled_config_passes_through_without_redaction() {
     assert!(v.get("_gate_summary").is_none());
 }
 
-/// When `GATE_DISABLED=1`, `gate run` must forward the tool's output unchanged.
-#[test]
-fn env_disabled_passes_through_without_redaction() {
-    let dir = tmp();
-    let tool = write_script(
-        &dir,
-        "fake-tkpsql",
-        r#"echo '{"rows":[{"id":1,"email":"bob@example.com"}],"count":1}'"#,
-    );
-    let config = write_config(&dir, "tools:\n  fake-tkpsql:\n    sql_arg: \"--sql\"\n");
-
-    let out = Command::new(BIN)
-        .arg("run")
-        .arg("--")
-        .arg(&tool)
-        .arg("--sql")
-        .arg("SELECT id, email FROM users")
-        .env("GATE_CONFIG", &config)
-        .env("GATE_DISABLED", "1")
-        .output()
-        .unwrap();
-
-    assert_eq!(exit_code(&out), 0);
-    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
-    assert_eq!(v["rows"][0]["email"], "bob@example.com");
-    assert!(v.get("_gate_summary").is_none());
-}
-
 /// hash_values: true in config produces [PII:type:XXXXXXXX] placeholders end-to-end.
 #[test]
 fn hash_mode_end_to_end() {

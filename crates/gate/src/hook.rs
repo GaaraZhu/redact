@@ -24,15 +24,9 @@ pub fn run(format: &str) {
     // No output → passthrough (both Claude Code and Copilot CLI treat empty stdout as allow)
 }
 
-fn is_disabled_by_env() -> bool {
-    std::env::var("GATE_DISABLED")
-        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false)
-}
-
 /// Returns `Some(json_string)` to rewrite, `None` to pass through unchanged.
 fn process(stdin: &str, config: &Config, copilot: bool) -> Option<String> {
-    if !config.enabled || is_disabled_by_env() {
+    if !config.enabled {
         return None;
     }
 
@@ -58,15 +52,22 @@ fn process(stdin: &str, config: &Config, copilot: bool) -> Option<String> {
         .ok()
         .filter(|t| !t.is_empty())?;
 
-    // Loop avoidance: check the first non-env-var token
+    // Loop avoidance + self-protection: check the first non-env-var token
     let first_cmd = tokens
         .iter()
         .find(|t| !t.contains('=') || t.starts_with('-'))?;
     let first_basename = command::token_basename(first_cmd);
     if first_basename == "gate" {
         let idx = tokens.iter().position(|t| t == first_cmd).unwrap_or(0);
-        if tokens.get(idx + 1).map(String::as_str) == Some("run") {
-            return None;
+        match tokens.get(idx + 1).map(String::as_str) {
+            Some("run") => return None,
+            Some("disable") | Some("enable") => {
+                return Some(block_response(
+                    "gate self-protection: gate enable/disable is blocked inside an agent harness.",
+                    copilot,
+                ));
+            }
+            _ => {}
         }
     }
 
@@ -131,6 +132,25 @@ fn process(stdin: &str, config: &Config, copilot: bool) -> Option<String> {
             })
             .to_string(),
         )
+    }
+}
+
+fn block_response(message: &str, copilot: bool) -> String {
+    if copilot {
+        json!({
+            "permissionDecision": "block",
+            "message": message,
+        })
+        .to_string()
+    } else {
+        json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "block",
+                "message": message,
+            }
+        })
+        .to_string()
     }
 }
 
@@ -229,40 +249,28 @@ mod tests {
         .is_none());
     }
 
-    #[test]
-    fn passthrough_when_env_disabled() {
-        let _guard = LOCK.lock().unwrap();
-        unsafe { std::env::set_var("GATE_DISABLED", "1") };
-        let result = process_cc(
-            &make_input("tkpsql --sql 'SELECT email FROM users'"),
-            &default_config(),
-        );
-        unsafe { std::env::remove_var("GATE_DISABLED") };
-        assert!(result.is_none());
+    fn is_block(output: &str) -> bool {
+        let v: Value = serde_json::from_str(output).unwrap();
+        v["hookSpecificOutput"]["permissionDecision"]
+            .as_str()
+            .unwrap_or("")
+            == "block"
     }
 
     #[test]
-    fn env_disabled_true_string() {
+    fn blocks_gate_disable() {
         let _guard = LOCK.lock().unwrap();
-        unsafe { std::env::set_var("GATE_DISABLED", "true") };
-        let result = process_cc(
-            &make_input("tkpsql --sql 'SELECT email FROM users'"),
-            &default_config(),
-        );
-        unsafe { std::env::remove_var("GATE_DISABLED") };
-        assert!(result.is_none());
+        let config = default_config();
+        let out = process_cc(&make_input("gate disable"), &config).unwrap();
+        assert!(is_block(&out));
     }
 
     #[test]
-    fn env_disabled_zero_does_not_disable() {
+    fn blocks_gate_enable() {
         let _guard = LOCK.lock().unwrap();
-        unsafe { std::env::set_var("GATE_DISABLED", "0") };
-        let result = process_cc(
-            &make_input("tkpsql --sql 'SELECT email FROM users'"),
-            &default_config(),
-        );
-        unsafe { std::env::remove_var("GATE_DISABLED") };
-        assert!(result.is_some(), "GATE_DISABLED=0 must not disable gate");
+        let config = default_config();
+        let out = process_cc(&make_input("gate enable"), &config).unwrap();
+        assert!(is_block(&out));
     }
 
     #[test]
