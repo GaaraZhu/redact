@@ -56,12 +56,6 @@ tools:
     sql_arg: "--sql"
   tkmsql:
     sql_arg: "--sql"
-  psql:
-    sql_arg: "-c"
-    extra_args: ["--csv"]   # injected automatically; switches psql to CSV output for the pipe
-    pipe: "python3 -c \"import sys,csv,json; r=csv.DictReader(sys.stdin); print(json.dumps(list(r)))\""
-  mysql:
-    sql_arg: "-e"
   curl:
     pipe: "jq -c ."   # wraps curl output through jq so Gate 2 always receives JSON
 
@@ -108,3 +102,32 @@ mcp:
   # Prevents OOM on very large file-content reads from MCP servers.
   max_payload_bytes: 5242880  # 5 MiB
 ```
+
+## Raw database clients (opt-in)
+
+`psql`, `mysql`, and `mariadb` are supported but **not in the default config**. They typically require credentials on the command line — `mysql -u user -pPASS ...`, `psql "postgresql://user:pass@host/db"` — and gate **does not redact the command itself**, only its output. Credentials in the command land in the agent's transcript, shell history, and process listing.
+
+Prefer one of these instead:
+
+- **Toolkit wrappers** (`tkpsql`, `tkmsql`, `tkdbr`) — inject credentials from a secrets store; the AI never sees a password.
+- **MCP servers** — wrap the database behind an MCP server and use `gate init --mcp` or `gate init --wrap-mcp`. The AI calls a tool by name with no connection string involved.
+
+If you still want to wire up a raw client (local dev, CI, or an environment where credentials are sourced from `~/.my.cnf` / `~/.pgpass` / IAM tokens rather than the command line), copy the relevant block into your `tools:` section:
+
+```yaml
+tools:
+  psql:
+    sql_arg: "-c"
+    extra_args: ["--csv"]   # injected automatically; switches psql to CSV output for the pipe
+    pipe: "python3 -c \"import sys,csv,json; r=csv.DictReader(sys.stdin); print(json.dumps(list(r)))\""
+  mysql:
+    sql_arg: "-e"
+    extra_args: ["--batch"]   # injected automatically; switches mysql to TSV output for the pipe
+    pipe: "python3 -c \"import sys,csv,json; r=csv.DictReader(sys.stdin,delimiter='\\t'); print(json.dumps(list(r)))\""
+  mariadb:
+    sql_arg: "-e"
+    extra_args: ["--batch"]
+    pipe: "python3 -c \"import sys,csv,json; r=csv.DictReader(sys.stdin,delimiter='\\t'); print(json.dumps(list(r)))\""
+```
+
+The `pipe` directive requires a Unix shell and `python3`. Not supported on Windows — use a JSON-native client (e.g. `mysqlsh --result-format=json`) without a pipe instead.

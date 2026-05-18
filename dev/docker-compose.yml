@@ -9,7 +9,35 @@ services:
       - "5432:5432"
     volumes:
       - ./seed.sql:/docker-entrypoint-initdb.d/seed.sql
-      - gatepay-data:/var/lib/postgresql/data
+      - gatepay-postgres-data:/var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_DATABASE: gatepay
+      MYSQL_USER: gate
+      MYSQL_PASSWORD: gate
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./seed_mysql.sql:/docker-entrypoint-initdb.d/seed.sql
+      - gatepay-mysql-data:/var/lib/mysql
+
+  mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: gatepay
+      MARIADB_USER: gate
+      MARIADB_PASSWORD: gate
+      MARIADB_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./seed_mysql.sql:/docker-entrypoint-initdb.d/seed.sql
+      - gatepay-mariadb-data:/var/lib/mysql
 
 volumes:
-  gatepay-data:
+  gatepay-postgres-data:
+  gatepay-mysql-data:
+  gatepay-mariadb-data:

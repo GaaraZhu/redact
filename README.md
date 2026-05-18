@@ -277,10 +277,18 @@ The `tk*` commands are managed by [toolkit](https://github.com/scott-abernethy/t
 | `tkmsql` | MS SQL Server (toolkit-managed) | `sql_arg: "--sql"` |
 | `tkdbr` | Databricks (toolkit-managed) | `sql_arg: "--sql"` |
 | `databricks` | Databricks CLI (native) | `sql_arg: "--json"`, `json_sql_path: "statement"` — extracts SQL from JSON payload before redaction |
-| `psql` | PostgreSQL (direct) | `sql_arg: "-c"`, `extra_args: ["--csv"]`, `pipe: "python3 ..."` — gate injects `--csv` automatically and converts output to JSON |
-| `mysql` | MySQL (direct) | `sql_arg: "-e"` |
 | `curl` | HTTP data sources | `pipe: "jq -c ."` — wraps output through jq so Gate 2 receives JSON |
 | Any JSON-returning command | — | Add it to `tools:` in config |
+| `psql`, `mysql`, `mariadb` | Raw DB clients | **Not enabled by default** — see [Raw database clients](docs/configuration.md#raw-database-clients-opt-in) in the configuration docs |
+
+### Prefer encapsulated tools over raw CLI clients
+
+Raw database clients (`psql`, `mysql`, `mariadb`) typically require credentials on the command line — and gate redacts the *output*, not the *command itself*. Any password in the command line lands in the agent's transcript, shell history, and process listing. For that reason they are **not in the default config**; prefer one of:
+
+- **Toolkit commands** (`tkpsql`, `tkmsql`, `tkdbr`) — inject credentials from a secrets store; the AI never sees a password.
+- **MCP servers** — wrap the database behind an MCP server and use `gate init --mcp` or `gate init --wrap-mcp` to proxy it through gate. The AI calls a tool by name with no connection string involved.
+
+If you still need a raw client (local dev, CI, or where credentials are sourced from `~/.my.cnf` / `~/.pgpass` / IAM tokens rather than the command line), opt-in instructions are in [docs/configuration.md](docs/configuration.md#raw-database-clients-opt-in).
 
 ## Commands
 
@@ -345,6 +353,22 @@ brew uninstall gate
 ## Contributing
 
 Bug reports and pull requests are welcome. For significant changes, open an issue first to discuss the proposal. See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, pre-commit checklist, and safety rules for redaction changes.
+
+### Local database containers
+
+`dev/docker-compose.yml` provides test databases seeded with PII demo data:
+
+```bash
+cd dev && docker compose up -d
+```
+
+| Service | Port | Credentials |
+|---|---|---|
+| PostgreSQL 16 | 5432 | user `gate`, password `gate`, database `gatepay` |
+| MySQL 8 | 3306 | user `gate`, password `gate`, database `gatepay` |
+| MariaDB 11 | 3307 | user `gate`, password `gate`, database `gatepay` |
+
+All three are seeded with the same `users` and `transactions` tables containing realistic PII (names, emails, phone numbers, card numbers).
 
 ## License
 

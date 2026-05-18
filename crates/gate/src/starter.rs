@@ -15,12 +15,12 @@ tools:
   databricks:
     sql_arg: "--json"  # Databricks CLI sends SQL in a JSON payload
     json_sql_path: "statement"  # Extract SQL from the "statement" field in the JSON
-  psql:
-    sql_arg: "-c"
-    extra_args: ["--csv"]
-    pipe: "python3 -c \"import sys,csv,json; r=csv.DictReader(sys.stdin); print(json.dumps(list(r)))\""
   curl:
     pipe: "jq -c ."   # wraps curl output through jq so Gate 2 always receives JSON
+  # Raw database clients (psql, mysql, mariadb) are supported but not enabled by
+  # default — they typically require credentials on the command line, which leak
+  # into the agent's context. See docs/configuration.md for opt-in examples and
+  # safer alternatives (toolkit, MCP).
 
 pii:
   action: redact           # redact | warn | reject
