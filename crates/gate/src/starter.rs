@@ -1,6 +1,6 @@
 pub const STARTER_CONFIG: &str = r#"# gate configuration
 
-# Set to false to disable all PII redaction (equivalent to GATE_DISABLED=1 env var).
+# Set to false to disable all PII redaction.
 enabled: true
 
 # Tools whose Bash invocations are intercepted and piped through `gate run`.

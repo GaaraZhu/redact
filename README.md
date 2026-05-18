@@ -304,14 +304,7 @@ The `tk*` commands are managed by [toolkit](https://github.com/scott-abernethy/t
 | `gate run [--verbose] [-- <cmd>]` | Run a command through the redaction pipeline, or pipe JSON from stdin for direct Gate 2 inspection. Normally invoked by the hook; run manually to test. `--verbose` prints each field's Gate 2 decision to stderr. |
 | `gate hook` | *(internal)* Hook entry point — invoked by the harness, not directly |
 
-To disable redaction for a single shell session without editing the config file, set the `GATE_DISABLED` environment variable:
-
-```bash
-export GATE_DISABLED=1   # disable for this session
-unset GATE_DISABLED      # re-enable
-```
-
-The env var takes precedence over the config file, so it works even when `enabled: true` is set.
+To disable redaction, use `gate disable`. Run `gate enable` to re-enable.
 
 ## Uninstallation
 
