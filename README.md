@@ -31,6 +31,8 @@ The demo walks through three steps:
 
 Also works with OpenCode — see [How it works](#how-it-works) for all supported harnesses.
 
+> For the design rationale, threat-model walkthrough, and detection-pipeline deep dive, read [**Introducing gate**](https://gaarazhu.github.io/introducing-gate/).
+
 ## Scan your schema
 
 Before installing the hook, use `gate scan` to assess how much PII your database schema exposes. Pipe the output of a schema query — one that returns `TABLE_NAME` and `COLUMN_NAME` — and gate prints a risk report across every table. No config is required; `gate scan` only uses built-in column-name detection. If you haven't created a config yet, run `gate config --init-only` first.
@@ -177,24 +179,16 @@ Run `gate validate` to confirm your config is valid before the first session.
 
 ## How it works
 
-`gate` covers two access paths that agents use to reach data:
+`gate` covers two access paths agents use to reach data. The [blog post](https://gaarazhu.github.io/introducing-gate/) has the full walkthrough; the short version:
 
 ### Bash tooling path
 
-Every Bash command the AI tries to run passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which applies two sequential detection gates and returns sanitized JSON. The AI sees the same JSON structure as before, with PII values replaced by typed placeholders like `[PII:email]`.
-
-The rewrite is **enforcing** in all supported harnesses — the AI cannot bypass it:
-
-- **Claude Code** — registered as a [`PreToolUse` hook](https://docs.anthropic.com/en/docs/claude-code/hooks) in `~/.claude/settings.json`; Claude Code replaces the command via `updatedInput` before running it.
-- **OpenCode** — a TypeScript plugin's `tool.execute.before` handler mutates `output.args.command` before the subprocess spawns; same guarantee as Claude Code.
-- **GitHub Copilot CLI** — registered as a `PreToolUse` hook in `.github/hooks/PreToolUse.json`; Copilot CLI replaces the command via `modifiedArgs` before running it.
-
-Humans and CI scripts running outside the agent harness are unaffected — no wrapper scripts are installed on PATH.
+Every Bash command passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which spawns the subprocess and pipes stdout through the two-gate detection pipeline. The rewrite happens in the harness's pre-tool-execution hook — it is **enforcing** in Claude Code, OpenCode, and GitHub Copilot CLI; the agent cannot bypass it. Humans and CI scripts running outside the harness are untouched.
 
 ```
 AI asks to run: tkpsql query --sql "SELECT * FROM users"
                         │
-         harness hook fires (PreToolUse / tool.execute.before / Copilot PreToolUse)
+         harness hook fires (PreToolUse / tool.execute.before)
                         │
               gate hook rewrites to: gate run -- tkpsql query --sql "..."
                         │
@@ -203,56 +197,26 @@ AI asks to run: tkpsql query --sql "SELECT * FROM users"
          │ Gate 2: Value scanning      │  regex + column-name heuristics + Luhn check
          └──────────────┬──────────────┘
                         │
-         {"id": 1, "full_name": "[PII:name]", "email": "[PII:email]", "status": "active", ..., "_gate_summary": {...}}
+         {"id": 1, "full_name": "[PII:name]", "email": "[PII:email]", ..., "_gate_summary": {...}}
 ```
 
 ### MCP path
 
-For agents that call MCP servers directly, `gate mcp` acts as a transparent stdio proxy registered in the harness as the MCP server. It forwards all JSON-RPC traffic verbatim except for `tools/call` responses, which are passed through Gate 2 before reaching the model. No changes to the upstream MCP server are required.
+`gate mcp` is a transparent stdio proxy registered in the harness as the MCP server. It forwards all JSON-RPC traffic verbatim except `tools/call` responses, which are passed through Gate 2 before reaching the model. No changes to the upstream server are required.
 
 > **Note:** only `tools/call` responses are redacted — `resources/read`, `prompts/get`, and other MCP message types are forwarded without inspection.
 
 ```
-AI calls MCP server (tools/call)
-                        │
-         gate mcp proxy (registered as the MCP server in the harness)
-                        │
-              forwards request verbatim to upstream MCP server
-                        │
-         upstream returns result.content[]
-                        │
-         ┌──────────────┴──────────────┐
-         │ Gate 2: Value scanning      │  redacts PII in text/JSON content items
-         └──────────────┬──────────────┘
-                        │
-         {"content": [{"type": "text", "text": "{\"email\": \"[PII:email]\"}"}], "_gate_summary": {...}}
+AI ──tools/call──> gate mcp ──forward──> upstream MCP server
+                       │
+                       │ <── tools/call response with PII
+                       │
+                       │ Gate 2 scan + redact
+                       │
+AI <───redacted result─┘
 ```
 
 See [Quickstart](#quickstart) step 4 for setup commands (`--wrap-mcp` to convert existing servers, `--mcp` to register one manually).
-
-**What the upstream MCP server returns** (never reaches the model):
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"rows\": [{\"id\": 1, \"full_name\": \"Alice Johnson\", \"email\": \"alice.johnson@example.com\", \"status\": \"active\"}], \"count\": 1}"
-    }
-  ]
-}
-```
-
-**What the AI sees**:
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"rows\": [{\"id\": 1, \"full_name\": \"[PII:name]\", \"email\": \"[PII:email]\", \"status\": \"active\"}], \"count\": 1, \"_gate_summary\": {\"redacted\": 2, \"types\": [\"name\", \"email\"]}}"
-    }
-  ]
-}
-```
 
 ## Output format
 
