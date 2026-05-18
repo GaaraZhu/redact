@@ -766,6 +766,9 @@ pub(crate) fn find_git_root() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Mutex;
+
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     fn tmp_path() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -916,6 +919,7 @@ mod tests {
 
     #[test]
     fn claude_settings_path_global_uses_home() {
+        let _lock = HOME_LOCK.lock().unwrap();
         let saved = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", "/test/home") };
         let path = claude_settings_path("global").unwrap();
@@ -936,6 +940,7 @@ mod tests {
 
     #[test]
     fn mcp_path_default_scope_uses_home() {
+        let _lock = HOME_LOCK.lock().unwrap();
         let saved = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", "/test/home") };
         let path = claude_code_mcp_path("global").unwrap();
@@ -948,6 +953,7 @@ mod tests {
 
     #[test]
     fn mcp_path_user_scope_uses_home() {
+        let _lock = HOME_LOCK.lock().unwrap();
         let saved = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", "/test/home") };
         let path = claude_code_mcp_path("user").unwrap();
@@ -968,6 +974,7 @@ mod tests {
 
     #[test]
     fn opencode_config_path_global_uses_home() {
+        let _lock = HOME_LOCK.lock().unwrap();
         let saved = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", "/test/home") };
         let path = opencode_config_path("global").unwrap();
