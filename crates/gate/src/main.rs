@@ -8,6 +8,7 @@ mod hook;
 mod init;
 mod init_opencode;
 mod list;
+mod protect;
 mod run;
 mod scan;
 mod starter;
@@ -114,6 +115,12 @@ enum Commands {
     Enable,
     /// Disable PII redaction (sets enabled: false in config)
     Disable,
+    /// Protect the config file by transferring ownership to root (Unix only).
+    /// After this, all config changes require sudo. Run as: sudo gate protect
+    Protect,
+    /// Remove root ownership from the config file, restoring direct write access.
+    /// Run as: sudo gate unprotect
+    Unprotect,
     /// Remove the hook, config directory, and any gate-generated opencode plugins
     Uninstall,
     /// Print version
@@ -190,6 +197,8 @@ fn main() {
         Commands::Validate => validate::run(),
         Commands::Enable => enable_disable::run(true),
         Commands::Disable => enable_disable::run(false),
+        Commands::Protect => protect::protect(),
+        Commands::Unprotect => protect::unprotect(),
         Commands::Uninstall => uninstall::run(),
         Commands::Version => println!("{}", env!("CARGO_PKG_VERSION")),
     }

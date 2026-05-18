@@ -46,8 +46,12 @@ pub fn run(action: Action) {
                 println!("All specified columns are already in the allowlist. No changes made.");
                 return;
             }
-            write_atomic(&path, &new_content)
-                .unwrap_or_else(|e| exit_with_error(&format!("failed to write config: {e}")));
+            write_atomic(&path, &new_content).unwrap_or_else(|e| {
+                if is_permission_denied(&e) {
+                    exit_with_error("Config is protected. Run: sudo gate allowlist add ...");
+                }
+                exit_with_error(&format!("failed to write config: {e}"))
+            });
             println!(
                 "Added {} column(s) to allowlist: {}",
                 added.len(),
@@ -69,8 +73,12 @@ pub fn run(action: Action) {
                 return;
             }
             let new_content = remove_from_allowlist_in_yaml(&content, &columns);
-            write_atomic(&path, &new_content)
-                .unwrap_or_else(|e| exit_with_error(&format!("failed to write config: {e}")));
+            write_atomic(&path, &new_content).unwrap_or_else(|e| {
+                if is_permission_denied(&e) {
+                    exit_with_error("Config is protected. Run: sudo gate allowlist remove ...");
+                }
+                exit_with_error(&format!("failed to write config: {e}"))
+            });
             println!(
                 "Removed {} column(s) from allowlist: {}",
                 to_remove.len(),
@@ -227,6 +235,12 @@ pub fn write_atomic(path: &std::path::Path, content: &str) -> anyhow::Result<()>
         .parent()
         .ok_or_else(|| anyhow::anyhow!("config path has no parent directory"))?;
     std::fs::create_dir_all(parent)?;
+    // On Unix, rename() checks directory write permission, not the target file's permission.
+    // Opening the file for write first gives us the correct EPERM when the file is protected.
+    #[cfg(unix)]
+    if path.exists() {
+        std::fs::OpenOptions::new().write(true).open(path)?;
+    }
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -235,6 +249,12 @@ pub fn write_atomic(path: &std::path::Path, content: &str) -> anyhow::Result<()>
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+fn is_permission_denied(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<std::io::Error>()
+        .map(|io| io.kind() == std::io::ErrorKind::PermissionDenied)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

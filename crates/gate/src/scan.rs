@@ -857,6 +857,16 @@ fn run_review() {
             return;
         }
     };
+    // Pre-check write permission before starting the review so the user isn't
+    // surprised by an EPERM after completing a long interactive session.
+    #[cfg(unix)]
+    if path.exists() {
+        if let Err(e) = std::fs::OpenOptions::new().write(true).open(&path) {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                common::error::exit_with_error("Config is protected. Run: sudo gate scan --review");
+            }
+        }
+    }
     let content = if path.exists() {
         std::fs::read_to_string(&path).unwrap_or_default()
     } else {
@@ -905,8 +915,13 @@ fn run_review() {
     new_content = crate::allowlist::remove_from_allowlist_in_yaml(&new_content, &to_remove);
 
     if let Err(e) = crate::allowlist::write_atomic(&path, &new_content) {
-        eprintln!("error: failed to write config: {e}");
-        return;
+        if e.downcast_ref::<std::io::Error>()
+            .map(|io| io.kind() == std::io::ErrorKind::PermissionDenied)
+            .unwrap_or(false)
+        {
+            common::error::exit_with_error("Config is protected. Run: sudo gate scan --review");
+        }
+        common::error::exit_with_error(&format!("failed to write config: {e}"));
     }
 
     println!();

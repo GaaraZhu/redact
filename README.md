@@ -293,6 +293,8 @@ The `tk*` commands are managed by [toolkit](https://github.com/scott-abernethy/t
 | `gate uninstall` | Remove the hook, config directory, and gate-generated opencode plugins (with confirmation) |
 | `gate enable` | Enable PII redaction (sets `enabled: true` in config) |
 | `gate disable` | Disable PII redaction (sets `enabled: false` in config) |
+| `gate protect` *(Unix only)* | Transfer config ownership to root so agents cannot modify it. Run as: `sudo gate protect` |
+| `gate unprotect` *(Unix only)* | Restore your ownership of the config. Run as: `sudo gate unprotect` |
 | `gate config [--path] [--print] [--init-only]` | Create and edit the config file. `--path` prints the resolved config path and exits. `--print` prints the raw config contents and exits. `--init-only` creates `~/.config/gate/config.yaml` without opening the editor — useful in scripts. |
 | `gate list` | Show configured tools and their SQL flags |
 | `gate validate` | Check config for errors and warnings |
@@ -305,6 +307,31 @@ The `tk*` commands are managed by [toolkit](https://github.com/scott-abernethy/t
 | `gate hook` | *(internal)* Hook entry point — invoked by the harness, not directly |
 
 To disable redaction, use `gate disable`. Run `gate enable` to re-enable.
+
+### Config file protection (Unix only)
+
+For a stronger security guarantee, you can transfer ownership of the config file to root:
+
+```bash
+sudo gate protect
+```
+
+After this, the agent cannot modify the config file — it runs as you, and only root can write to a root-owned file. Any gate command that writes to the config will require `sudo`:
+
+```bash
+sudo gate enable
+sudo gate disable
+sudo gate config
+sudo gate allowlist add <col>
+```
+
+To restore direct write access:
+
+```bash
+sudo gate unprotect
+```
+
+This is enforced at the OS level and applies across all harnesses (Claude Code, opencode, Copilot CLI). It is not supported on Windows.
 
 ## Uninstallation
 

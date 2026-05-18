@@ -23,8 +23,13 @@ pub fn run(enabled: bool) {
     };
 
     let new_content = set_enabled_in_yaml(&content, enabled);
-    write_atomic(&path, &new_content)
-        .unwrap_or_else(|e| exit_with_error(&format!("failed to write config: {e}")));
+    let cmd = if enabled { "enable" } else { "disable" };
+    write_atomic(&path, &new_content).unwrap_or_else(|e| {
+        if is_permission_denied(&e) {
+            exit_with_error(&format!("Config is protected. Run: sudo gate {cmd}"));
+        }
+        exit_with_error(&format!("failed to write config: {e}"))
+    });
 
     if enabled {
         println!("gate enabled. PII redaction is ON.");
@@ -68,6 +73,12 @@ fn write_atomic(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
         .parent()
         .ok_or_else(|| anyhow::anyhow!("config path has no parent directory"))?;
     std::fs::create_dir_all(parent)?;
+    // On Unix, rename() checks directory write permission, not the target file's permission.
+    // Opening the file for write first gives us the correct EPERM when the file is protected.
+    #[cfg(unix)]
+    if path.exists() {
+        std::fs::OpenOptions::new().write(true).open(path)?;
+    }
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -76,6 +87,12 @@ fn write_atomic(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+fn is_permission_denied(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<std::io::Error>()
+        .map(|io| io.kind() == std::io::ErrorKind::PermissionDenied)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

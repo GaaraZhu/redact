@@ -8,6 +8,15 @@ pub fn run(show_path: bool, print_config: bool, init_only: bool) {
     if interactive && is_agent_harness() {
         exit_with_error("gate config: interactive mode is not available inside an agent harness");
     }
+    // Pre-check: if the config is protected, tell the user before launching an editor.
+    #[cfg(unix)]
+    if interactive {
+        if let Ok(p) = config_path() {
+            if p.exists() && std::fs::OpenOptions::new().write(true).open(&p).is_err() {
+                exit_with_error("Config is protected. Run: sudo gate config");
+            }
+        }
+    }
 
     let path = match config_path() {
         Ok(p) => p,
@@ -62,8 +71,12 @@ fn write_starter(path: &Path) {
             exit_with_error(&format!("failed to create config directory: {e}"))
         });
     }
-    std::fs::write(path, crate::starter::STARTER_CONFIG)
-        .unwrap_or_else(|e| exit_with_error(&format!("failed to write starter config: {e}")));
+    std::fs::write(path, crate::starter::STARTER_CONFIG).unwrap_or_else(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            exit_with_error("Config is protected. Run: sudo gate config");
+        }
+        exit_with_error(&format!("failed to write starter config: {e}"))
+    });
 }
 
 fn resolve_editor() -> String {
