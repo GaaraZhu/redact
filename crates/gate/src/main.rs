@@ -36,8 +36,7 @@ enum Commands {
         format: String,
     },
     #[command(
-        about = "Execute a tool with Gate 1 + Gate 2 PII redaction on its JSON output.\n  \
-                       With no args, reads JSON from stdin and applies Gate 2 directly"
+        about = "Execute a tool with Gate 1 + Gate 2 PII redaction on its JSON output.\nWith no args, reads JSON from stdin and applies Gate 2 directly"
     )]
     Run {
         /// Print per-field redaction decisions to stderr for debugging
@@ -47,8 +46,7 @@ enum Commands {
         args: Vec<String>,
     },
     #[command(
-        about = "Register the PreToolUse hook in the agent harness settings.\n  \
-                       With --mcp, registers a gate mcp proxy entry for an MCP server instead"
+        about = "Register the PreToolUse hook in the agent harness settings.\nWith --mcp, registers a gate mcp proxy entry for an MCP server instead"
     )]
     Init {
         /// Target harness: claude-code (default) or opencode
@@ -88,9 +86,7 @@ enum Commands {
     /// List configured tools and their sql_arg values
     List,
     #[command(
-        about = "Read columnar JSON from stdin and report PII-exposed column names.\n  \
-                       Pipe the output of a schema query (SELECT TABLE_NAME, COLUMN_NAME ...) into this command.\n  \
-                       Example: tkdbr query --sql \"SELECT TABLE_NAME, COLUMN_NAME FROM ...\" | gate scan"
+        about = "Read columnar JSON from stdin and report PII-exposed column names.\nPipe the output of a schema query (SELECT TABLE_NAME, COLUMN_NAME ...) into this command.\nExample: tkdbr query --sql \"SELECT TABLE_NAME, COLUMN_NAME FROM ...\" | gate scan"
     )]
     Scan {
         /// Show all detected columns in the Top Findings section (not truncated)
@@ -104,17 +100,14 @@ enum Commands {
         review: bool,
     },
     #[command(
-        about = "Manage the column allowlist — columns that skip name-based PII redaction.\n  \
-                       Value-based checks (Luhn, regex patterns) still apply to allowlisted columns"
+        about = "Manage the column allowlist — columns that skip name-based PII redaction.\nValue-based checks (Luhn, regex patterns) still apply to allowlisted columns"
     )]
     Allowlist {
         #[command(subcommand)]
         action: AllowlistAction,
     },
     #[command(
-        about = "Run a stdio MCP proxy: intercepts tools/call responses and redacts PII.\n  \
-                       Usage: gate mcp [--name <server>] [--] <upstream-cmd> [args...]\n  \
-                       Example: gate mcp --name postgres -- uvx mcp-server-postgres"
+        about = "Run a stdio MCP proxy: intercepts tools/call responses and redacts PII.\nUsage: gate mcp [--name <server>] [--] <upstream-cmd> [args...]\nExample: gate mcp --name postgres -- uvx mcp-server-postgres"
     )]
     Mcp {
         /// Logical server name used in `gate retro` stats. Defaults to the upstream
@@ -131,20 +124,17 @@ enum Commands {
     /// Disable PII redaction (sets enabled: false in config)
     Disable,
     #[command(
-        about = "Protect the config file by transferring ownership to root (Unix only).\n  \
-                       After this, all config changes require sudo. Run as: sudo gate protect"
+        about = "Protect the config file by transferring ownership to root (Unix only).\nAfter this, all config changes require sudo. Run as: sudo gate protect"
     )]
     Protect,
     #[command(
-        about = "Remove root ownership from the config file, restoring direct write access.\n  \
-                       Run as: sudo gate unprotect"
+        about = "Remove root ownership from the config file, restoring direct write access.\nRun as: sudo gate unprotect"
     )]
     Unprotect,
     /// Remove the hook, config directory, and any gate-generated opencode plugins
     Uninstall,
     #[command(
-        about = "Show a protection retrospective: how many queries gate protected and how\n  \
-                       many PII fields it redacted (also known as stats/audit/report)"
+        about = "Show a protection retrospective: how many queries gate protected and how many PII fields it redacted (also known as stats/audit/report)"
     )]
     Retro,
     /// Print version
