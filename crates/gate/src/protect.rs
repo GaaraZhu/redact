@@ -1,4 +1,3 @@
-use common::config::config_path;
 use common::error::exit_with_error;
 use common::harness::is_agent_harness;
 
@@ -33,6 +32,7 @@ fn is_root() -> bool {
 
 #[cfg(unix)]
 fn protect_unix() {
+    use common::config::config_path;
     use std::os::unix::fs::PermissionsExt;
 
     if !is_root() {
@@ -74,6 +74,7 @@ fn protect_unix() {
 
 #[cfg(unix)]
 fn unprotect_unix() {
+    use common::config::config_path;
     use std::os::unix::fs::PermissionsExt;
 
     if !is_root() {
