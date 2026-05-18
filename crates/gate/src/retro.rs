@@ -8,6 +8,7 @@
 //! help text so people grepping `--help` find this command).
 
 use common::config::Config;
+use common::patterns::map_to_tier1_category;
 use common::stats::{stats_path, Event};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -99,10 +100,8 @@ impl Summary {
 }
 
 // All separators and table rows render to this width.
-// Top Tools columns: TOOL_COL(25) + 2 + "Queries protected"(17) + 2 +
-//                    "Queries with PII"(16) + 2 + "Hit rate"(8) = 72.
-const TABLE_WIDTH: usize = 72;
-const TOOL_COL: usize = 25; // TABLE_WIDTH - 47
+const TABLE_WIDTH: usize = 100;
+const TOOL_COL: usize = 25; // For Tool Breakdown section
 
 fn truncate_to(s: &str, max: usize) -> String {
     if s.len() <= max {
@@ -160,7 +159,7 @@ fn print_report(s: &Summary) {
         println!("\x1b[1;96mTool Breakdown\x1b[0m");
         println!("{}", "─".repeat(TABLE_WIDTH));
         println!(
-            "{:<TOOL_COL$}  {:>17}  {:>16}  {:>8}",
+            "{:<TOOL_COL$}  {:>25}  {:>25}  {:>12}",
             "Tool", H_PROT, H_PII, H_HR,
         );
         println!("{}", "─".repeat(TABLE_WIDTH));
@@ -170,7 +169,7 @@ fn print_report(s: &Summary) {
                 (stat.queries_with_pii as f64 / stat.queries as f64) * 100.0
             );
             println!(
-                "{:<TOOL_COL$}  {:>17}  {:>16}  {:>8}",
+                "{:<TOOL_COL$}  {:>25}  {:>25}  {:>12}",
                 truncate_to(name, TOOL_COL),
                 stat.queries,
                 stat.queries_with_pii,
@@ -185,26 +184,54 @@ fn print_report(s: &Summary) {
         by_count.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
         let total_redacted: usize = s.type_counts.values().sum();
 
+        let mut grouped: HashMap<&str, Vec<(&String, &usize)>> = HashMap::new();
+        for (name, count) in &by_count {
+            let tier1 = map_to_tier1_category(name);
+            grouped.entry(tier1).or_default().push((name, count));
+        }
+
+        let mut tier1_sorted: Vec<&str> = grouped.keys().copied().collect();
+        tier1_sorted.sort_by_key(|tier1| grouped[tier1].iter().map(|(_, c)| *c).sum::<usize>());
+        tier1_sorted.reverse();
+
         const H_CAT: &str = "Category";
+        const H_SUBCAT: &str = "Sub Category";
         const H_REDACTED: &str = "PII fields redacted";
         const H_PCT: &str = "Percentage";
 
         println!("\x1b[1;96mPII Breakdown\x1b[0m");
         println!("{}", "─".repeat(TABLE_WIDTH));
-        println!("{:<TOOL_COL$}  {:>20}  {:>23}", H_CAT, H_REDACTED, H_PCT,);
+        println!(
+            "{:<24}  {:<22}  {:>20}        {:>16}",
+            H_CAT, H_SUBCAT, H_REDACTED, H_PCT,
+        );
         println!("{}", "─".repeat(TABLE_WIDTH));
-        for (name, count) in by_count.iter().take(10) {
-            let pct = if total_redacted > 0 {
-                (**count as f64 / total_redacted as f64) * 100.0
-            } else {
-                0.0
-            };
-            println!(
-                "{:<TOOL_COL$}  {:>20}  {:>22.1}%",
-                truncate_to(name, TOOL_COL),
-                count,
-                pct,
-            );
+
+        let mut row_count = 0;
+        for tier1 in tier1_sorted {
+            let items = &grouped[tier1];
+            for (i, (name, count)) in items.iter().enumerate() {
+                if row_count >= 10 {
+                    break;
+                }
+                let pct = if total_redacted > 0 {
+                    (**count as f64 / total_redacted as f64) * 100.0
+                } else {
+                    0.0
+                };
+                let cat_display = if i == 0 { tier1 } else { "" };
+                println!(
+                    "{:<24}  {:<22}  {:>20}        {:>15.1}%",
+                    cat_display,
+                    truncate_to(name, 22),
+                    count,
+                    pct,
+                );
+                row_count += 1;
+            }
+            if row_count >= 10 {
+                break;
+            }
         }
         println!();
     }
