@@ -17,6 +17,22 @@ cargo test --all
 
 Rust stable is required. No other dependencies beyond the Cargo workspace.
 
+## Local database containers
+
+`dev/docker-compose.yml` provides test databases seeded with PII demo data:
+
+```bash
+cd dev && docker compose up -d
+```
+
+| Service | Port | Credentials |
+|---|---|---|
+| PostgreSQL 16 | 5432 | user `gate`, password `gate`, database `gatepay` |
+| MySQL 8 | 3306 | user `gate`, password `gate`, database `gatepay` |
+| MariaDB 11 | 3307 | user `gate`, password `gate`, database `gatepay` |
+
+All three are seeded with the same `users` and `transactions` tables containing realistic PII (names, emails, phone numbers, card numbers).
+
 ## Pre-commit checklist
 
 Run all three from the workspace root and fix any failures before pushing:
