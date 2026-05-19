@@ -121,6 +121,24 @@ fn report_harness_installations() {
         }
     }
 
+    // Copilot CLI
+    let copilot_path = PathBuf::from(".github")
+        .join("hooks")
+        .join("PreToolUse.json");
+    if copilot_path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&copilot_path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if v["hooks"]["PreToolUse"]
+                    .as_array()
+                    .map(|arr| arr.iter().any(crate::init::copilot_entry_has_gate_hook))
+                    .unwrap_or(false)
+                {
+                    found.push(format!("Copilot CLI ({})", copilot_path.display()));
+                }
+            }
+        }
+    }
+
     if found.is_empty() {
         println!("No harness integrations detected.");
         println!("Run `gate init` (Claude Code) or `gate init --harness opencode` to install.");
