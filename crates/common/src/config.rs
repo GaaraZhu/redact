@@ -213,7 +213,9 @@ impl Config {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let contents = std::fs::read_to_string(path)?;
+        let raw = std::fs::read_to_string(path)?;
+        // Normalize Windows CRLF → LF so serde_yaml doesn't choke on \r.
+        let contents = raw.replace('\r', "");
         serde_yaml::from_str(&contents)
             .map_err(|e| anyhow::anyhow!("Failed to parse config at {}: {}", path.display(), e))
     }
@@ -373,6 +375,15 @@ pii:
         assert_eq!(config.pii.confidence_threshold, 0.8);
         assert_eq!(config.pii.redaction, "[PII:{type}]");
         assert!(config.pii.include_summary);
+    }
+
+    #[test]
+    fn crlf_line_endings_parse_correctly() {
+        // Windows config files use CRLF; serde_yaml chokes on \r without normalization.
+        let yaml = "enabled: true\r\npii:\r\n  action: warn\r\n";
+        let config = load_from_yaml(yaml).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.pii.action, Action::Warn);
     }
 
     #[test]
