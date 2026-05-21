@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod allowlist;
+mod color;
 mod command;
 mod config_cmd;
 mod enable_disable;

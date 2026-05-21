@@ -119,8 +119,13 @@ fn print_empty() {
 }
 
 fn print_report(s: &Summary) {
+    let (hdr, reset, dim) = if crate::color::supports_color() {
+        ("\x1b[1;96m", "\x1b[0m", "\x1b[2m")
+    } else {
+        ("", "", "")
+    };
     println!();
-    println!("\x1b[1;96mGate Retro — all time\x1b[0m");
+    println!("{hdr}Gate Retro — all time{reset}");
     println!("{}", "─".repeat(TABLE_WIDTH));
     let hit_pct = if s.queries > 0 {
         (s.queries_with_pii as f64 / s.queries as f64) * 100.0
@@ -156,7 +161,7 @@ fn print_report(s: &Summary) {
         const H_PII: &str = "Queries with PII";
         const H_HR: &str = "Hit rate";
 
-        println!("\x1b[1;96mTool Breakdown\x1b[0m");
+        println!("{hdr}Tool Breakdown{reset}");
         println!("{}", "─".repeat(TABLE_WIDTH));
         println!(
             "{:<TOOL_COL$}  {:>25}  {:>25}  {:>12}",
@@ -199,7 +204,7 @@ fn print_report(s: &Summary) {
         const H_REDACTED: &str = "PII fields redacted";
         const H_PCT: &str = "Percentage";
 
-        println!("\x1b[1;96mPII Breakdown\x1b[0m");
+        println!("{hdr}PII Breakdown{reset}");
         println!("{}", "─".repeat(TABLE_WIDTH));
         println!(
             "{:<24}  {:<22}  {:>20}        {:>16}",
@@ -237,7 +242,7 @@ fn print_report(s: &Summary) {
     }
 
     println!(
-        "\x1b[2m{} sensitive fields never reached the model.\x1b[0m",
+        "{dim}{} sensitive fields never reached the model.{reset}",
         s.fields_redacted
     );
     println!();
