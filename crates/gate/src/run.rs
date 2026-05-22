@@ -241,7 +241,7 @@ fn build_gate1_plan(args: &[String], basename: &str, config: &Config) -> RedactP
         &extraction,
         &config.pii.action,
         &config.pii.wildcard_policy,
-        &config.pii.effective_column_names(),
+        &config.pii.effective_column_denylist(),
     )
 }
 

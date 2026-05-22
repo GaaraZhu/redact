@@ -26,10 +26,17 @@ pii:
   action: redact           # redact | warn | reject
   wildcard_policy: warn    # warn | reject
 
-  # Add column names beyond the built-in denylist (email, ssn, dob, phone, npi, …)
-  # column_names:
+  # False-negative fix: columns Gate missed that should be redacted.
+  # Use when a column name isn't in the built-in synonym table.
+  # column_denylist:
+  #   - identification_number
   #   - secret_token
-  #   - api_key
+
+  # False-positive fix: columns Gate redacts that shouldn't be.
+  # Name-based checks are skipped; value-level scanning (Luhn, regex) still applies.
+  # column_allowlist:
+  #   - employee_id   # internal auto-increment PK, safe to expose
+  #   - city          # not sensitive in this schema
 
   # Override or add PII regex patterns
   # patterns:

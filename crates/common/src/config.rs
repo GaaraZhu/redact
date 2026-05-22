@@ -95,11 +95,13 @@ pub struct ToolConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PiiConfig {
-    /// Additional column names beyond the built-in denylist. Use `effective_column_names()` to get the merged set.
-    #[serde(default)]
-    pub column_names: Vec<String>,
+    /// Extra column names to force-redact beyond the built-in denylist.
+    /// Use `effective_column_denylist()` to get the merged set.
+    /// The alias `column_names` is accepted for backward compatibility.
+    #[serde(default, alias = "column_names")]
+    pub column_denylist: Vec<String>,
     /// Column names that must never be auto-redacted by name. Overrides both the built-in
-    /// denylist and `column_names`. Value-based checks (Luhn, regex patterns) still apply.
+    /// denylist and `column_denylist`. Value-based checks (Luhn, regex patterns) still apply.
     #[serde(default)]
     pub column_allowlist: Vec<String>,
     #[serde(default)]
@@ -166,7 +168,7 @@ fn default_true() -> bool {
 impl Default for PiiConfig {
     fn default() -> Self {
         Self {
-            column_names: Vec::new(),
+            column_denylist: Vec::new(),
             column_allowlist: Vec::new(),
             action: Action::default(),
             wildcard_policy: WildcardPolicy::default(),
@@ -184,9 +186,9 @@ impl Default for PiiConfig {
 impl PiiConfig {
     /// Returns the merged column denylist: built-in defaults union user-supplied additions.
     /// All names are lowercased. Order: builtins first, then user additions not already present.
-    pub fn effective_column_names(&self) -> Vec<String> {
+    pub fn effective_column_denylist(&self) -> Vec<String> {
         let mut names: Vec<String> = COLUMN_DENYLIST.iter().map(|s| s.to_string()).collect();
-        for name in &self.column_names {
+        for name in &self.column_denylist {
             let lower = name.to_lowercase();
             if !names.iter().any(|n| n == &lower) {
                 names.push(lower);
@@ -272,7 +274,7 @@ mod tests {
         assert_eq!(config.pii.action, Action::Redact);
         assert_eq!(config.pii.wildcard_policy, WildcardPolicy::Warn);
         assert!(config.tools.is_empty());
-        assert!(config.pii.column_names.is_empty());
+        assert!(config.pii.column_denylist.is_empty());
         assert!(config.pii.column_allowlist.is_empty());
         assert!(config.pii.patterns.is_empty());
         assert!(!config.pii.hash_values);
@@ -332,7 +334,7 @@ pii:
         assert!(!config.pii.include_summary);
         assert!(config.pii.hash_values);
         assert_eq!(config.pii.hash_salt, "my-secret");
-        assert_eq!(config.pii.column_names, vec!["secret_token"]);
+        assert_eq!(config.pii.column_denylist, vec!["secret_token"]); // parsed via alias "column_names"
         let pat = &config.pii.patterns["custom_id"];
         assert_eq!(pat.regex, r"\bID-\d{6}\b");
         assert_eq!(pat.confidence, 0.9);

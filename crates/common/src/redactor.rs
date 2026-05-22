@@ -119,7 +119,7 @@ pub fn redact_with_stats(
     }
 
     let patterns = CompiledPattern::from_config(&config.patterns);
-    let effective_names = config.effective_column_names();
+    let effective_names = config.effective_column_denylist();
     let effective_allowlist = config.effective_column_allowlist();
     let mut summary = RedactSummary::new();
 

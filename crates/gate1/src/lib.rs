@@ -102,7 +102,7 @@ pub fn extract_columns(sql: &str) -> ColumnExtraction {
 /// Build a `RedactPlan` from the column extraction result.
 ///
 /// `denylist` should be the lowercased effective column names from `PiiConfig`
-/// (`config.pii.effective_column_names()`).
+/// (`config.pii.effective_column_denylist()`).
 pub fn build_plan(
     extraction: &ColumnExtraction,
     action: &Action,
