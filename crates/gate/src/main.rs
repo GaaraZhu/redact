@@ -32,10 +32,10 @@ struct Cli {
 enum Commands {
     // ── Setup ────────────────────────────────────────────────────────────────
     #[command(
-        about = "Register the PreToolUse hook in the agent harness settings.\nWith --mcp, registers a gate mcp proxy entry for an MCP server instead"
+        about = "Register the PreToolUse hook in the agent harness settings.\nWith --wrap-mcp, converts existing MCP servers to gate mcp proxies (dry-run by default; use --yes to apply).\nWith --mcp, registers a single gate mcp proxy entry for a named MCP server."
     )]
     Init {
-        /// Target harness: claude-code (default) or opencode
+        /// Target harness: claude-code (default), opencode, cursor, or copilot-cli
         #[arg(long, default_value = "claude-code")]
         harness: String,
         /// Installation scope: global/user (default) or project
@@ -116,7 +116,7 @@ enum Commands {
     },
     /// PreToolUse hook: rewrite matching Bash commands to route through gate run
     Hook {
-        /// Output format: claude-code (default) or copilot
+        /// Output format: claude-code (default), copilot, or cursor
         #[arg(long, default_value = "claude-code")]
         format: String,
     },
