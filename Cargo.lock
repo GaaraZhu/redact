@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "gate"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "anyhow",
  "clap",
