@@ -75,7 +75,8 @@ pub fn run() {
 }
 
 fn report_harness_installations() {
-    let mut found: Vec<String> = Vec::new();
+    let mut hooks: Vec<String> = Vec::new();
+    let mut mcp_wraps: Vec<String> = Vec::new();
     let in_git_repo = crate::init::find_git_root().is_some();
 
     // Claude Code
@@ -89,7 +90,7 @@ fn report_harness_installations() {
                         .map(|arr| arr.iter().any(crate::init::entry_has_gate_hook))
                         .unwrap_or(false)
                     {
-                        found.push(format!("Claude Code ({})", path.display()));
+                        hooks.push(format!("Claude Code ({})", path.display()));
                     }
                 }
             }
@@ -106,7 +107,7 @@ fn report_harness_installations() {
         if path.exists() {
             if let Ok(contents) = std::fs::read_to_string(&path) {
                 if crate::init_opencode::has_gate_header(&contents) {
-                    found.push(format!("opencode ({})", path.display()));
+                    hooks.push(format!("opencode ({})", path.display()));
                 }
             }
         }
@@ -117,7 +118,7 @@ fn report_harness_installations() {
     if project_path.exists() {
         if let Ok(contents) = std::fs::read_to_string(&project_path) {
             if crate::init_opencode::has_gate_header(&contents) {
-                found.push("opencode (.opencode/plugin/gate.ts)".to_string());
+                hooks.push("opencode (.opencode/plugin/gate.ts)".to_string());
             }
         }
     }
@@ -133,7 +134,7 @@ fn report_harness_installations() {
                         .map(|arr| arr.iter().any(crate::init::cursor_entry_has_gate_hook))
                         .unwrap_or(false)
                     {
-                        found.push(format!("Cursor ({})", path.display()));
+                        hooks.push(format!("Cursor ({})", path.display()));
                     }
                 }
             }
@@ -150,7 +151,7 @@ fn report_harness_installations() {
                     .map(|arr| arr.iter().any(crate::init::cursor_entry_has_gate_hook))
                     .unwrap_or(false)
                 {
-                    found.push("Cursor (.cursor/hooks.json)".to_string());
+                    hooks.push("Cursor (.cursor/hooks.json)".to_string());
                 }
             }
         }
@@ -169,7 +170,7 @@ fn report_harness_installations() {
                         .map(|arr| arr.iter().any(crate::init::copilot_entry_has_gate_hook))
                         .unwrap_or(false)
                     {
-                        found.push(format!("Copilot CLI ({})", copilot_path.display()));
+                        hooks.push(format!("Copilot CLI ({})", copilot_path.display()));
                     }
                 }
             }
@@ -184,7 +185,7 @@ fn report_harness_installations() {
     if let Some(ref h) = home {
         let path = PathBuf::from(h).join(".claude.json");
         if has_gate_mcp_wrap(&path, "mcpServers") {
-            found.push(format!("Claude Code MCP wrap ({})", path.display()));
+            mcp_wraps.push(format!("Claude Code ({})", path.display()));
         }
     }
 
@@ -192,27 +193,27 @@ fn report_harness_installations() {
     if let Some(ref h) = home {
         let path = PathBuf::from(h).join(".cursor").join("mcp.json");
         if has_gate_mcp_wrap(&path, "mcpServers") {
-            found.push(format!("Cursor MCP wrap ({})", path.display()));
+            mcp_wraps.push(format!("Cursor ({})", path.display()));
         }
     }
 
     // Cursor MCP wrap (project): .cursor/mcp.json
     let cursor_mcp_project = PathBuf::from(".cursor").join("mcp.json");
     if has_gate_mcp_wrap(&cursor_mcp_project, "mcpServers") {
-        found.push("Cursor MCP wrap (.cursor/mcp.json)".to_string());
+        mcp_wraps.push("Cursor (.cursor/mcp.json)".to_string());
     }
 
     // Copilot CLI MCP wrap (global): ~/.copilot/mcp-config.json
     if let Some(ref h) = home {
         let path = PathBuf::from(h).join(".copilot").join("mcp-config.json");
         if has_gate_mcp_wrap(&path, "mcpServers") {
-            found.push(format!("Copilot CLI MCP wrap ({})", path.display()));
+            mcp_wraps.push(format!("Copilot CLI ({})", path.display()));
         }
     }
 
     // Project MCP wrap (shared by Claude Code and Copilot CLI): .mcp.json
     if has_gate_mcp_wrap(&PathBuf::from(".mcp.json"), "mcpServers") {
-        found.push("MCP wrap (.mcp.json)".to_string());
+        mcp_wraps.push("Claude Code / Copilot CLI (.mcp.json)".to_string());
     }
 
     // opencode MCP wrap (global): ~/.config/opencode/opencode.json
@@ -222,22 +223,33 @@ fn report_harness_installations() {
             .join("opencode")
             .join("opencode.json");
         if has_gate_mcp_wrap(&path, "mcp") {
-            found.push(format!("opencode MCP wrap ({})", path.display()));
+            mcp_wraps.push(format!("opencode ({})", path.display()));
         }
     }
 
     // opencode MCP wrap (project): opencode.json
     if has_gate_mcp_wrap(&PathBuf::from("opencode.json"), "mcp") {
-        found.push("opencode MCP wrap (opencode.json)".to_string());
+        mcp_wraps.push("opencode (opencode.json)".to_string());
     }
 
-    if found.is_empty() {
+    if hooks.is_empty() && mcp_wraps.is_empty() {
         println!("No harness integrations detected.");
         println!("Run `gate init` (Claude Code) or `gate init --harness <opencode|cursor|copilot-cli>` to install.");
     } else {
-        println!("Installed harness integrations:");
-        for h in &found {
-            println!("  - {h}");
+        if !hooks.is_empty() {
+            println!("Bash hooks:");
+            for h in &hooks {
+                println!("  - {h}");
+            }
+        }
+        if !mcp_wraps.is_empty() {
+            if !hooks.is_empty() {
+                println!();
+            }
+            println!("MCP wraps:");
+            for h in &mcp_wraps {
+                println!("  - {h}");
+            }
         }
     }
 
