@@ -41,6 +41,8 @@ gate init --harness copilot-cli --wrap-mcp
 
 Already-proxied servers are skipped automatically, so re-running is safe.
 
+> **Cursor project-scope note:** After running `gate init --harness cursor --scope project --wrap-mcp --yes`, re-enable the affected servers in Cursor's **Settings → Tools & MCPs**. User-scoped servers (`~/.cursor/mcp.json`) do not require this step.
+
 ## Register a single server
 
 ```bash
@@ -65,6 +67,8 @@ gate init --harness copilot-cli --mcp postgres --mcp-cmd "uvx mcp-server-postgre
 # Copilot CLI — project-level (.mcp.json)
 gate init --harness copilot-cli --scope project --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
 ```
+
+> **Cursor project-scope note:** After registering a project-scoped server (`--harness cursor --scope project`), re-enable it in Cursor's **Settings → Tools & MCPs**. User-scoped servers (`~/.cursor/mcp.json`) do not require this step.
 
 ## Scope of redaction
 
