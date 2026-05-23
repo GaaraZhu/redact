@@ -1,4 +1,11 @@
-const HARNESS_VARS: &[&str] = &["CLAUDECODE", "OPENCODE", "COPILOT_CLI", "COPILOT_RUN_APP"];
+const HARNESS_VARS: &[&str] = &[
+    "CLAUDECODE",
+    "OPENCODE",
+    "COPILOT_CLI",
+    "COPILOT_RUN_APP",
+    "CURSOR_AGENT",
+    "CURSOR_TRACE_ID",
+];
 
 pub fn is_agent_harness() -> bool {
     HARNESS_VARS.iter().any(|var| std::env::var(var).is_ok())
@@ -70,5 +77,15 @@ mod tests {
     #[test]
     fn copilot_run_app_detected() {
         assert!(with_only_var("COPILOT_RUN_APP", is_agent_harness));
+    }
+
+    #[test]
+    fn cursor_agent_detected() {
+        assert!(with_only_var("CURSOR_AGENT", is_agent_harness));
+    }
+
+    #[test]
+    fn cursor_trace_id_detected() {
+        assert!(with_only_var("CURSOR_TRACE_ID", is_agent_harness));
     }
 }

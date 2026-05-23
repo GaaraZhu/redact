@@ -29,7 +29,7 @@ The demo walks through three steps:
 
 ![gate intercepting PII before it reaches the model](assets/demo.gif)
 
-Also works with OpenCode — see [How it works](#how-it-works) for all supported harnesses.
+Also works with OpenCode, Cursor, and GitHub Copilot CLI — see [How it works](#how-it-works) for all supported harnesses.
 
 > For the design rationale, threat-model walkthrough, and detection-pipeline deep dive, read [**Introducing gate**](https://gaarazhu.github.io/introducing-gate/).
 
@@ -85,11 +85,14 @@ For false positives (e.g. `city` in a `products` table), run `gate scan --review
    # OpenCode
    gate init --harness opencode
 
+   # Cursor
+   gate init --harness cursor
+
    # GitHub Copilot CLI (project-scoped, run from repo root)
    gate init --harness copilot-cli
    ```
 
-   Add `--scope project` for project-only setup. Restart your opencode session after `gate init` to load the plugin. For Copilot CLI, the generated `.github/hooks/PreToolUse.json` is gitignored by default — each developer runs `gate init --harness copilot-cli` once in their local clone.
+   Add `--scope project` for project-only setup. Restart your opencode or Cursor session after `gate init` to load the hook. For Copilot CLI, the generated `.github/hooks/PreToolUse.json` is gitignored by default — each developer runs `gate init --harness copilot-cli` once in their local clone.
 
 4. *(Optional)* **Register MCP server proxies** so `tools/call` responses also pass through gate:
 
@@ -113,7 +116,7 @@ Run `gate validate` to confirm your config is valid before the first session.
 
 ### Bash tooling path
 
-Every Bash command passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which spawns the subprocess and pipes stdout through the two-gate detection pipeline. The rewrite happens in the harness's pre-tool-execution hook — it is **enforcing** in Claude Code, OpenCode, and GitHub Copilot CLI; the agent cannot bypass it. Humans and CI scripts running outside the harness are untouched.
+Every Bash command passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which spawns the subprocess and pipes stdout through the two-gate detection pipeline. The rewrite happens in the harness's pre-tool-execution hook — it is **enforcing** in Claude Code, OpenCode, Cursor, and GitHub Copilot CLI; the agent cannot bypass it. Humans and CI scripts running outside the harness are untouched.
 
 ```
 AI asks to run: tkpsql query --sql "SELECT * FROM users"

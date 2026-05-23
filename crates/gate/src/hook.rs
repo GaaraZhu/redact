@@ -7,25 +7,38 @@ use common::config::Config;
 use serde_json::{json, Value};
 use std::io::{self, Read};
 
+enum Format {
+    ClaudeCode,
+    Copilot,
+    Cursor,
+}
+
 pub fn run(format: &str) {
-    if format != "claude-code" && format != "copilot" {
-        eprintln!("gate hook: unknown format '{format}'; supported: claude-code, copilot");
-        std::process::exit(1);
-    }
+    let fmt = match format {
+        "claude-code" => Format::ClaudeCode,
+        "copilot" => Format::Copilot,
+        "cursor" => Format::Cursor,
+        _ => {
+            eprintln!(
+                "gate hook: unknown format '{format}'; supported: claude-code, copilot, cursor"
+            );
+            std::process::exit(1);
+        }
+    };
     let mut stdin = String::new();
     io::stdin().read_to_string(&mut stdin).unwrap_or_default();
 
     // Load config; on failure passthrough so a bad config never blocks every Bash command
     let config = Config::load().unwrap_or_default();
 
-    if let Some(output) = process(&stdin, &config, format == "copilot") {
+    if let Some(output) = process(&stdin, &config, fmt) {
         print!("{}", output);
     }
-    // No output → passthrough (both Claude Code and Copilot CLI treat empty stdout as allow)
+    // No output → passthrough (claude-code, copilot, and cursor all treat empty stdout as allow)
 }
 
 /// Returns `Some(json_string)` to rewrite, `None` to pass through unchanged.
-fn process(stdin: &str, config: &Config, copilot: bool) -> Option<String> {
+fn process(stdin: &str, config: &Config, format: Format) -> Option<String> {
     if !config.enabled {
         return None;
     }
@@ -64,7 +77,7 @@ fn process(stdin: &str, config: &Config, copilot: bool) -> Option<String> {
             Some("disable") | Some("enable") => {
                 return Some(block_response(
                     "gate self-protection: gate enable/disable is blocked inside an agent harness.",
-                    copilot,
+                    &format,
                 ));
             }
             _ => {}
@@ -113,16 +126,8 @@ fn process(stdin: &str, config: &Config, copilot: bool) -> Option<String> {
         );
     }
 
-    if copilot {
-        Some(
-            json!({
-                "permissionDecision": "allow",
-                "modifiedArgs": updated_input,
-            })
-            .to_string(),
-        )
-    } else {
-        Some(
+    match format {
+        Format::ClaudeCode => Some(
             json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
@@ -131,26 +136,45 @@ fn process(stdin: &str, config: &Config, copilot: bool) -> Option<String> {
                 }
             })
             .to_string(),
-        )
+        ),
+        Format::Copilot => Some(
+            json!({
+                "permissionDecision": "allow",
+                "modifiedArgs": updated_input,
+            })
+            .to_string(),
+        ),
+        Format::Cursor => Some(
+            json!({
+                "permission": "allow",
+                "updated_input": updated_input,
+            })
+            .to_string(),
+        ),
     }
 }
 
-fn block_response(message: &str, copilot: bool) -> String {
-    if copilot {
-        json!({
-            "permissionDecision": "block",
-            "message": message,
-        })
-        .to_string()
-    } else {
-        json!({
+fn block_response(message: &str, format: &Format) -> String {
+    match format {
+        Format::ClaudeCode => json!({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "block",
                 "message": message,
             }
         })
-        .to_string()
+        .to_string(),
+        Format::Copilot => json!({
+            "permissionDecision": "block",
+            "message": message,
+        })
+        .to_string(),
+        Format::Cursor => json!({
+            "permission": "deny",
+            "user_message": message,
+            "agent_message": message,
+        })
+        .to_string(),
     }
 }
 
@@ -192,9 +216,12 @@ mod tests {
 
     static LOCK: Mutex<()> = Mutex::new(());
 
-    /// Shorthand for the claude-code output format (false = not copilot).
     fn process_cc(stdin: &str, config: &Config) -> Option<String> {
-        process(stdin, config, false)
+        process(stdin, config, Format::ClaudeCode)
+    }
+
+    fn process_cursor(stdin: &str, config: &Config) -> Option<String> {
+        process(stdin, config, Format::Cursor)
     }
 
     fn make_config(entries: &[(&str, Option<&str>, Option<&str>)]) -> Config {
@@ -969,7 +996,7 @@ mod tests {
         let out = process(
             &make_input("psql -c 'SELECT email FROM users'"),
             &config,
-            true,
+            Format::Copilot,
         )
         .unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
@@ -986,7 +1013,7 @@ mod tests {
     fn copilot_format_passthrough_is_none() {
         let _guard = LOCK.lock().unwrap();
         let config = default_config();
-        assert!(process(&make_input("ls -la"), &config, true).is_none());
+        assert!(process(&make_input("ls -la"), &config, Format::Copilot).is_none());
     }
 
     #[test]
@@ -1002,7 +1029,7 @@ mod tests {
             }
         })
         .to_string();
-        let out = process(&input, &config, true).unwrap();
+        let out = process(&input, &config, Format::Copilot).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["modifiedArgs"]["restart"], json!(false));
         assert_eq!(v["permissionDecision"].as_str().unwrap(), "allow");
@@ -1019,7 +1046,7 @@ mod tests {
             "tool_input": { "command": "psql -c 'SELECT phone FROM users'" }
         })
         .to_string();
-        let out = process(&input, &config, true).unwrap();
+        let out = process(&input, &config, Format::Copilot).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let cmd = v["modifiedArgs"]["command"].as_str().unwrap();
         assert!(cmd.starts_with("gate run -- psql"), "got: {cmd}");
@@ -1040,9 +1067,68 @@ mod tests {
             "tool_input": { "command": "psql -c 'SELECT email FROM users'" }
         })
         .to_string();
-        let out = process(&input, &config, true).unwrap();
+        let out = process(&input, &config, Format::Copilot).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let cmd = v["modifiedArgs"]["command"].as_str().unwrap();
         assert!(cmd.starts_with("gate run -- psql"), "got: {cmd}");
+    }
+
+    // ── cursor format tests ───────────────────────────────────────────────────
+
+    fn is_cursor_block(output: &str) -> bool {
+        let v: Value = serde_json::from_str(output).unwrap();
+        v["permission"].as_str().unwrap_or("") == "deny"
+    }
+
+    #[test]
+    fn cursor_format_passthrough_is_none() {
+        let _guard = LOCK.lock().unwrap();
+        let config = default_config();
+        assert!(process_cursor(&make_input("ls -la"), &config).is_none());
+    }
+
+    #[test]
+    fn cursor_format_blocks_gate_enable() {
+        let _guard = LOCK.lock().unwrap();
+        let config = default_config();
+        let out = process_cursor(&make_input("gate enable"), &config).unwrap();
+        assert!(is_cursor_block(&out));
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["user_message"].as_str().is_some());
+        assert!(v["agent_message"].as_str().is_some());
+        assert!(v.get("hookSpecificOutput").is_none());
+    }
+
+    #[test]
+    fn cursor_format_rewrite_emits_permission_and_updated_input() {
+        let _guard = LOCK.lock().unwrap();
+        let config = default_config();
+        let out =
+            process_cursor(&make_input("psql -c 'SELECT email FROM users'"), &config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["permission"].as_str().unwrap(), "allow");
+        let cmd = v["updated_input"]["command"].as_str().unwrap();
+        assert!(cmd.starts_with("gate run -- psql"), "got: {cmd}");
+        assert!(v.get("hookSpecificOutput").is_none());
+        assert!(v.get("permissionDecision").is_none());
+    }
+
+    #[test]
+    fn cursor_format_preserves_extra_tool_input_fields() {
+        let _guard = LOCK.lock().unwrap();
+        let config = default_config();
+        let input = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "tkpsql --sql 'SELECT 1'",
+                "restart": false
+            }
+        })
+        .to_string();
+        let out = process_cursor(&input, &config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["permission"].as_str().unwrap(), "allow");
+        assert_eq!(v["updated_input"]["restart"], json!(false));
     }
 }

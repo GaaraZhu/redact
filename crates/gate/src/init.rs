@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 const HOOK_COMMAND: &str = "gate hook";
 const COPILOT_HOOK_COMMAND: &str = "gate hook --format copilot";
+const CURSOR_HOOK_COMMAND: &str = "gate hook --format cursor";
 
 pub fn run(
     harness: &str,
@@ -110,8 +111,9 @@ pub fn run(
         }
         "opencode" => crate::init_opencode::run(scope),
         "copilot-cli" => init_copilot_cli(),
+        "cursor" => init_cursor(scope),
         _ => exit_with_error(&format!(
-            "unsupported harness '{harness}'; supported: claude-code, opencode, copilot-cli. \
+            "unsupported harness '{harness}'; supported: claude-code, opencode, copilot-cli, cursor. \
              Usage: gate init --harness <harness>"
         )),
     }
@@ -745,6 +747,111 @@ pub(crate) fn copilot_entry_has_gate_hook(entry: &Value) -> bool {
     entry
         .get("bash")
         .and_then(|b| b.as_str())
+        .map(is_gate_hook_variant)
+        .unwrap_or(false)
+}
+
+// ── Cursor hook installation ─────────────────────────────────────────────────
+
+/// Resolve the Cursor hooks config path for the given scope.
+/// "project" → `.cursor/hooks.json`; anything else ("user", "global") → `~/.cursor/hooks.json`.
+pub(crate) fn cursor_hooks_path(scope: &str) -> Result<PathBuf, String> {
+    if scope == "project" {
+        return Ok(PathBuf::from(".cursor").join("hooks.json"));
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "cannot resolve home directory: set HOME or USERPROFILE".to_string())?;
+    Ok(PathBuf::from(home).join(".cursor").join("hooks.json"))
+}
+
+fn init_cursor(scope: &str) {
+    let path = match cursor_hooks_path(scope) {
+        Ok(p) => p,
+        Err(e) => exit_with_error(&format!("cannot resolve cursor hooks path: {e}")),
+    };
+    run_cursor_with_path(&path);
+}
+
+fn run_cursor_with_path(path: &Path) {
+    let settings = read_cursor_hook_file(path);
+    match insert_cursor_hook(settings) {
+        CursorHookResult::AlreadyInstalled => {
+            println!("gate hook is already installed in {}", path.display());
+        }
+        CursorHookResult::Done(updated) => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap_or_else(|e| {
+                    exit_with_error(&format!("failed to create {}: {e}", parent.display()))
+                });
+            }
+            write_atomic(path, &updated).unwrap_or_else(|e| {
+                exit_with_error(&format!("failed to write {}: {e}", path.display()))
+            });
+            println!("gate hook installed in {}", path.display());
+            println!("Run `gate config` to define which tools to intercept.");
+        }
+    }
+}
+
+enum CursorHookResult {
+    AlreadyInstalled,
+    Done(Value),
+}
+
+fn read_cursor_hook_file(path: &Path) -> Value {
+    if !path.exists() {
+        return json!({"version": 1, "hooks": {}});
+    }
+    let contents = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| exit_with_error(&format!("failed to read {}: {e}", path.display())));
+    serde_json::from_str(&contents)
+        .unwrap_or_else(|e| exit_with_error(&format!("failed to parse {}: {e}", path.display())))
+}
+
+fn insert_cursor_hook(mut settings: Value) -> CursorHookResult {
+    normalize_cursor_settings(&mut settings);
+
+    let arr = settings["hooks"]["preToolUse"].as_array().unwrap();
+    if arr
+        .iter()
+        .any(|e| e.get("command").and_then(|c| c.as_str()) == Some(CURSOR_HOOK_COMMAND))
+    {
+        return CursorHookResult::AlreadyInstalled;
+    }
+
+    let arr = settings["hooks"]["preToolUse"].as_array_mut().unwrap();
+    arr.retain(|entry| !cursor_entry_has_gate_hook(entry));
+    arr.push(json!({"command": CURSOR_HOOK_COMMAND}));
+
+    CursorHookResult::Done(settings)
+}
+
+fn normalize_cursor_settings(settings: &mut Value) {
+    if !settings.is_object() {
+        *settings = json!({"version": 1, "hooks": {}});
+    }
+    let obj = settings.as_object_mut().unwrap();
+    obj.entry("version".to_string()).or_insert(json!(1));
+    let hooks = obj.entry("hooks".to_string()).or_insert_with(|| json!({}));
+    if !hooks.is_object() {
+        *hooks = json!({});
+    }
+    let pretu = hooks
+        .as_object_mut()
+        .unwrap()
+        .entry("preToolUse".to_string())
+        .or_insert_with(|| json!([]));
+    if !pretu.is_array() {
+        *pretu = json!([]);
+    }
+}
+
+/// Returns true if the entry's `command` field is any variant of `gate hook ...`.
+pub(crate) fn cursor_entry_has_gate_hook(entry: &Value) -> bool {
+    entry
+        .get("command")
+        .and_then(|c| c.as_str())
         .map(is_gate_hook_variant)
         .unwrap_or(false)
 }
@@ -1478,5 +1585,125 @@ mod tests {
     fn copilot_entry_has_gate_hook_ignores_non_bash_field() {
         let entry = json!({"type": "command", "command": "gate hook --format copilot"});
         assert!(!copilot_entry_has_gate_hook(&entry));
+    }
+
+    // ── cursor init ───────────────────────────────────────────────────────────
+
+    fn tmp_cursor_path() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".cursor/hooks.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn cursor_creates_hook_file_from_scratch() {
+        let (_dir, path) = tmp_cursor_path();
+        run_cursor_with_path(&path);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["version"], json!(1));
+        let arr = v["hooks"]["preToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["command"].as_str().unwrap(), CURSOR_HOOK_COMMAND);
+    }
+
+    #[test]
+    fn cursor_idempotent_on_second_run() {
+        let (_dir, path) = tmp_cursor_path();
+        run_cursor_with_path(&path);
+        run_cursor_with_path(&path);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let arr = v["hooks"]["preToolUse"].as_array().unwrap();
+        let gate_count = arr
+            .iter()
+            .filter(|e| e["command"].as_str() == Some(CURSOR_HOOK_COMMAND))
+            .count();
+        assert_eq!(gate_count, 1);
+    }
+
+    #[test]
+    fn cursor_preserves_existing_hooks() {
+        let (_dir, path) = tmp_cursor_path();
+        let initial = json!({
+            "version": 1,
+            "hooks": {
+                "preToolUse": [
+                    {"command": "other-hook --check"}
+                ]
+            }
+        });
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        run_cursor_with_path(&path);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let arr = v["hooks"]["preToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        let cmds: Vec<&str> = arr.iter().filter_map(|e| e["command"].as_str()).collect();
+        assert!(cmds.contains(&"other-hook --check"));
+        assert!(cmds.contains(&CURSOR_HOOK_COMMAND));
+    }
+
+    #[test]
+    fn cursor_replaces_absolute_path_variant() {
+        let (_dir, path) = tmp_cursor_path();
+        let initial = json!({
+            "version": 1,
+            "hooks": {
+                "preToolUse": [
+                    {"command": "/usr/local/bin/gate hook --format cursor"}
+                ]
+            }
+        });
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        run_cursor_with_path(&path);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let arr = v["hooks"]["preToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["command"].as_str().unwrap(), CURSOR_HOOK_COMMAND);
+    }
+
+    #[test]
+    fn cursor_write_is_valid_json() {
+        let (_dir, path) = tmp_cursor_path();
+        run_cursor_with_path(&path);
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(serde_json::from_str::<Value>(&contents).is_ok());
+    }
+
+    #[test]
+    fn cursor_entry_has_gate_hook_detects_exact() {
+        let entry = json!({"command": "gate hook --format cursor"});
+        assert!(cursor_entry_has_gate_hook(&entry));
+    }
+
+    #[test]
+    fn cursor_entry_has_gate_hook_detects_absolute_path() {
+        let entry = json!({"command": "/usr/local/bin/gate hook --format cursor"});
+        assert!(cursor_entry_has_gate_hook(&entry));
+    }
+
+    #[test]
+    fn cursor_entry_has_gate_hook_ignores_other_tools() {
+        let entry = json!({"command": "other-hook --check"});
+        assert!(!cursor_entry_has_gate_hook(&entry));
+    }
+
+    #[test]
+    fn cursor_hooks_path_global_uses_home() {
+        let _lock = HOME_LOCK.lock().unwrap();
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", "/test/home") };
+        let path = cursor_hooks_path("global").unwrap();
+        match saved {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        assert_eq!(path, PathBuf::from("/test/home/.cursor/hooks.json"));
+    }
+
+    #[test]
+    fn cursor_hooks_path_project_is_relative() {
+        let path = cursor_hooks_path("project").unwrap();
+        assert_eq!(path, PathBuf::from(".cursor/hooks.json"));
     }
 }
