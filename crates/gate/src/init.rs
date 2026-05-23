@@ -56,9 +56,16 @@ pub fn run(
                 };
                 wrap_mcp_claude(&path, filter.as_deref(), yes);
             }
+            "cursor" => {
+                let path = match cursor_mcp_path(scope) {
+                    Ok(p) => p,
+                    Err(e) => exit_with_error(&e),
+                };
+                wrap_mcp_claude(&path, filter.as_deref(), yes);
+            }
             _ => exit_with_error(&format!(
-                "--wrap-mcp is only supported for claude-code, opencode, and copilot-cli harnesses \
-                 (got '{harness}')"
+                "--wrap-mcp is not supported for harness '{harness}'; \
+                 supported: claude-code, opencode, copilot-cli, cursor"
             )),
         }
         return;
@@ -93,9 +100,16 @@ pub fn run(
                 };
                 register_mcp_server(&path, server_name, cmd_str);
             }
+            "cursor" => {
+                let path = match cursor_mcp_path(scope) {
+                    Ok(p) => p,
+                    Err(e) => exit_with_error(&e),
+                };
+                register_mcp_server(&path, server_name, cmd_str);
+            }
             _ => exit_with_error(&format!(
-                "MCP registration is only supported for claude-code, opencode, and copilot-cli harnesses \
-                 (got '{harness}')"
+                "MCP registration is not supported for harness '{harness}'; \
+                 supported: claude-code, opencode, copilot-cli, cursor"
             )),
         }
         return;
@@ -749,6 +763,18 @@ pub(crate) fn copilot_entry_has_gate_hook(entry: &Value) -> bool {
         .and_then(|b| b.as_str())
         .map(is_gate_hook_variant)
         .unwrap_or(false)
+}
+
+/// Resolve the Cursor MCP config path for the given scope.
+/// "project" → `.cursor/mcp.json`; anything else ("user", "global") → `~/.cursor/mcp.json`.
+pub(crate) fn cursor_mcp_path(scope: &str) -> Result<PathBuf, String> {
+    if scope == "project" {
+        return Ok(PathBuf::from(".cursor").join("mcp.json"));
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "cannot resolve home directory: set HOME or USERPROFILE".to_string())?;
+    Ok(PathBuf::from(home).join(".cursor").join("mcp.json"))
 }
 
 // ── Cursor hook installation ─────────────────────────────────────────────────
@@ -1686,6 +1712,40 @@ mod tests {
     fn cursor_entry_has_gate_hook_ignores_other_tools() {
         let entry = json!({"command": "other-hook --check"});
         assert!(!cursor_entry_has_gate_hook(&entry));
+    }
+
+    #[test]
+    fn cursor_mcp_path_global_uses_home() {
+        let _lock = HOME_LOCK.lock().unwrap();
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", "/test/home") };
+        let path = cursor_mcp_path("global").unwrap();
+        match saved {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        assert_eq!(path, PathBuf::from("/test/home/.cursor/mcp.json"));
+    }
+
+    #[test]
+    fn cursor_mcp_path_project_is_relative() {
+        let path = cursor_mcp_path("project").unwrap();
+        assert_eq!(path, PathBuf::from(".cursor/mcp.json"));
+    }
+
+    #[test]
+    fn cursor_mcp_server_written_to_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        register_mcp_server(&path, "postgres", "uvx mcp-server-postgres");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["postgres"]["command"], "gate");
+        let args = v["mcpServers"]["postgres"]["args"].as_array().unwrap();
+        assert_eq!(args[0], "mcp");
+        assert_eq!(args[1], "--name");
+        assert_eq!(args[2], "postgres");
+        assert_eq!(args[3], "--");
+        assert_eq!(args[4], "uvx");
     }
 
     #[test]
