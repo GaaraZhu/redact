@@ -1,4 +1,43 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(ValueEnum, Clone)]
+enum Harness {
+    #[value(name = "claude-code")]
+    ClaudeCode,
+    Opencode,
+    Cursor,
+    #[value(name = "copilot-cli")]
+    CopilotCli,
+}
+
+impl Harness {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Opencode => "opencode",
+            Self::Cursor => "cursor",
+            Self::CopilotCli => "copilot-cli",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone)]
+enum HookFormat {
+    #[value(name = "claude-code")]
+    ClaudeCode,
+    Copilot,
+    Cursor,
+}
+
+impl HookFormat {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Copilot => "copilot",
+            Self::Cursor => "cursor",
+        }
+    }
+}
 
 mod allowlist;
 mod color;
@@ -35,9 +74,9 @@ enum Commands {
         about = "Register the PreToolUse hook in the agent harness settings.\nWith --wrap-mcp, converts existing MCP servers to gate mcp proxies (dry-run by default; use --yes to apply).\nWith --mcp, registers a single gate mcp proxy entry for a named MCP server."
     )]
     Init {
-        /// Target harness: claude-code (default), opencode, cursor, or copilot-cli
+        /// Agent harness to install the hook into
         #[arg(long, default_value = "claude-code")]
-        harness: String,
+        harness: Harness,
         /// Installation scope: global/user (default) or project
         #[arg(long, default_value = "global")]
         scope: String,
@@ -116,9 +155,9 @@ enum Commands {
     },
     /// PreToolUse hook: rewrite matching Bash commands to route through gate run
     Hook {
-        /// Output format: claude-code (default), copilot, or cursor
+        /// Output format matching the harness that invokes this hook
         #[arg(long, default_value = "claude-code")]
-        format: String,
+        format: HookFormat,
     },
     #[command(
         about = "Run a stdio MCP proxy: intercepts tools/call responses and redacts PII.\nUsage: gate mcp [--name <server>] [--] <upstream-cmd> [args...]\nExample: gate mcp --name postgres -- uvx mcp-server-postgres"
@@ -140,7 +179,7 @@ enum Commands {
         about = "Remove root ownership from the config file, restoring direct write access.\nRun as: sudo gate unprotect"
     )]
     Unprotect,
-    /// Remove the hook, config directory, and any gate-generated opencode plugins
+    /// Remove gate hooks from all harnesses, the config directory, and gate-generated plugin files
     Uninstall,
     /// Print version
     Version,
@@ -176,7 +215,7 @@ fn main() {
             servers,
             yes,
         } => init::run(
-            &harness,
+            harness.as_str(),
             &scope,
             mcp.as_deref(),
             mcp_cmd.as_deref(),
@@ -207,7 +246,7 @@ fn main() {
         Commands::Validate => validate::run(),
         Commands::List => list::run(),
         Commands::Run { verbose, args } => run::run(args, verbose),
-        Commands::Hook { format } => hook::run(&format),
+        Commands::Hook { format } => hook::run(format.as_str()),
         Commands::Mcp { name, upstream } => {
             // Strip a leading "--" separator if clap passed it through
             let upstream = if upstream.first().map(String::as_str) == Some("--") {

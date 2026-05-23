@@ -26,6 +26,12 @@ gate init --scope project --wrap-mcp --yes
 # OpenCode
 gate init --harness opencode --wrap-mcp --yes
 
+# Cursor — user-level ~/.cursor/mcp.json (dry-run)
+gate init --harness cursor --wrap-mcp
+
+# Cursor — project-level .cursor/mcp.json (dry-run)
+gate init --harness cursor --scope project --wrap-mcp
+
 # Copilot CLI — project-level .mcp.json (dry-run)
 gate init --harness copilot-cli --scope project --wrap-mcp
 
@@ -46,6 +52,12 @@ gate init --scope project --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
 
 # OpenCode
 gate init --harness opencode --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
+
+# Cursor — user-level (~/.cursor/mcp.json)
+gate init --harness cursor --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
+
+# Cursor — project-level (.cursor/mcp.json)
+gate init --harness cursor --scope project --mcp postgres --mcp-cmd "uvx mcp-server-postgres"
 
 # Copilot CLI — user-level (~/.copilot/mcp-config.json)
 gate init --harness copilot-cli --mcp postgres --mcp-cmd "uvx mcp-server-postgres"

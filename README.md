@@ -97,14 +97,20 @@ For false positives (e.g. `city` in a `products` table), run `gate scan --review
 4. *(Optional)* **Register MCP server proxies** so `tools/call` responses also pass through gate:
 
    ```bash
-   # Dry-run — shows what would change
+   # Claude Code (default) — dry-run, shows what would change
    gate init --wrap-mcp
 
-   # Apply
-   gate init --wrap-mcp --yes
+   # OpenCode
+   gate init --harness opencode --wrap-mcp --yes
+
+   # Cursor
+   gate init --harness cursor --wrap-mcp --yes
+
+   # Copilot CLI
+   gate init --harness copilot-cli --wrap-mcp --yes
    ```
 
-   See [docs/mcp.md](docs/mcp.md) for `--servers`, `--scope`, per-harness paths, and manual single-server registration.
+   Add `--scope project` for project-level MCP config. See [docs/mcp.md](docs/mcp.md) for `--servers`, per-harness paths, and manual single-server registration.
 
 5. **Start your AI session** — `gate` intercepts query commands automatically. No changes to your prompts or tools required.
 
@@ -234,7 +240,7 @@ sudo gate protect      # any future enable/disable/config/allowlist now needs su
 sudo gate unprotect    # restore direct write access
 ```
 
-Enforced at the OS level across all harnesses (Claude Code, opencode, Copilot CLI). Not supported on Windows.
+Enforced at the OS level across all harnesses (Claude Code, OpenCode, Cursor, Copilot CLI). Not supported on Windows.
 
 ## Documentation
 
@@ -252,7 +258,7 @@ gate uninstall
 brew uninstall gate
 ```
 
-`gate uninstall` removes the hook from your harness settings, the config directory at `~/.config/gate/`, and any gate-generated opencode plugins. It shows what will be deleted and asks for confirmation.
+`gate uninstall` removes gate hooks from all harnesses, the config directory at `~/.config/gate/`, and any gate-generated plugin files. It shows what will be deleted and asks for confirmation.
 
 ## Contributing
 
