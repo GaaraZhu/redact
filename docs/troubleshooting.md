@@ -12,6 +12,10 @@ The shell PATH inside the harness may differ from your login shell. Find the ful
 
 The plugin is loaded at session start — restart your opencode session after running `gate init --harness opencode`.
 
+**Codex CLI isn't intercepting commands after `gate init`.**
+
+Codex requires a few extra steps after `gate init --harness codex`: restart the session, open the Trust & Permissions UI, find the gate hook entry, mark it as trusted, and enable it. The hook will not fire until all three actions are completed.
+
 **Config file not found.**
 
 Run `gate config` to create `~/.config/gate/config.yaml`. If you store the config elsewhere, set `GATE_CONFIG=/path/to/config.yaml` in your environment.
