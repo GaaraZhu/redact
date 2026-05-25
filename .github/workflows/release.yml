@@ -148,6 +148,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -155,7 +164,9 @@ jobs:
 
       - name: Build release notes
         run: |
-          echo "## SHA256 checksums" > release_notes.md
+          git-cliff --latest --strip header > release_notes.md
+          echo "" >> release_notes.md
+          echo "## SHA256 checksums" >> release_notes.md
           echo '```' >> release_notes.md
           for f in artifacts/*.sha256; do
             sha=$(cat "$f")
