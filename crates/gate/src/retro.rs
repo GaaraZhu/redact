@@ -107,17 +107,6 @@ impl Summary {
     }
 }
 
-/// Nearest-rank percentile (`p` in 0.0..=100.0) over `sorted` (ascending).
-/// Returns `None` for an empty slice.
-fn percentile(sorted: &[u64], p: f64) -> Option<u64> {
-    if sorted.is_empty() {
-        return None;
-    }
-    let rank = (p / 100.0 * sorted.len() as f64).ceil() as usize;
-    let idx = rank.saturating_sub(1).min(sorted.len() - 1);
-    Some(sorted[idx])
-}
-
 // All separators and table rows render to this width.
 const TABLE_WIDTH: usize = 100;
 const TOOL_COL: usize = 25; // For Tool Breakdown section
@@ -173,26 +162,17 @@ fn print_report(s: &Summary) {
     println!();
 
     if !s.overhead_us.is_empty() {
-        let mut sorted = s.overhead_us.clone();
-        sorted.sort_unstable();
-        let ms = |us: u64| us as f64 / 1000.0;
-        let p50 = percentile(&sorted, 50.0).unwrap();
-        let p95 = percentile(&sorted, 95.0).unwrap();
-        let p99 = percentile(&sorted, 99.0).unwrap();
-        let slowest = *sorted.last().unwrap();
+        let avg_ms = s.overhead_us.iter().sum::<u64>() as f64 / s.overhead_us.len() as f64 / 1000.0;
 
         println!("{hdr}Gate Overhead — added latency per query{reset}");
         println!("{}", "─".repeat(TABLE_WIDTH));
-        println!("{:<TOOL_COL$}  {:>21.2} ms", "Median (p50):", ms(p50));
-        println!("{:<TOOL_COL$}  {:>21.2} ms", "p95:", ms(p95));
-        println!("{:<TOOL_COL$}  {:>21.2} ms", "p99:", ms(p99));
-        println!("{:<TOOL_COL$}  {:>21.2} ms", "Slowest:", ms(slowest));
+        println!("{:<TOOL_COL$}  {:>21.2} ms", "Average:", avg_ms);
         println!();
         println!(
-            "{dim}Gate added a median of {:.2} ms per query (n={}). \
+            "{dim}Gate added an average of {:.2} ms per query (n={}). \
              The wrapped tool's own runtime is not counted.{reset}",
-            ms(p50),
-            sorted.len(),
+            avg_ms,
+            s.overhead_us.len(),
         );
         println!();
     }
@@ -393,22 +373,12 @@ mod tests {
     }
 
     #[test]
-    fn percentile_nearest_rank() {
-        let sorted: Vec<u64> = (1..=100).collect();
-        assert_eq!(percentile(&sorted, 50.0), Some(50));
-        assert_eq!(percentile(&sorted, 95.0), Some(95));
-        assert_eq!(percentile(&sorted, 99.0), Some(99));
-        assert_eq!(percentile(&sorted, 100.0), Some(100));
-    }
-
-    #[test]
-    fn percentile_empty_is_none() {
-        assert_eq!(percentile(&[], 50.0), None);
-    }
-
-    #[test]
-    fn percentile_single_sample() {
-        assert_eq!(percentile(&[42], 50.0), Some(42));
-        assert_eq!(percentile(&[42], 99.0), Some(42));
+    fn average_overhead() {
+        let mut s = Summary::default();
+        for us in [1000, 2000, 3000] {
+            s.add(ev_timed("tkpsql", 0, us));
+        }
+        let avg_ms = s.overhead_us.iter().sum::<u64>() as f64 / s.overhead_us.len() as f64 / 1000.0;
+        assert!((avg_ms - 2.0).abs() < f64::EPSILON);
     }
 }
