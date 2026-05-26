@@ -11,6 +11,7 @@
   <a href="https://github.com/GaaraZhu/gate/releases"><img src="https://img.shields.io/github/v/release/GaaraZhu/gate" alt="Release"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://github.com/GaaraZhu/homebrew-gate"><img src="https://img.shields.io/badge/homebrew-tap-orange?logo=homebrew" alt="Homebrew"></a>
+  <img src="https://img.shields.io/badge/overhead-%3C5ms%20per%20query-brightgreen" alt="< 5ms overhead per query">
 </p>
 
 <p align="center">

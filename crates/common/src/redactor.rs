@@ -471,30 +471,33 @@ fn scan_string(
     }
 
     // 4. JSONB: if the value is a serialised JSON object or array, scan it recursively.
-    if let Ok(inner) = serde_json::from_str::<Value>(&s) {
-        if matches!(inner, Value::Object(_) | Value::Array(_)) {
-            let count_before = summary.redacted;
-            let walked = walk(
-                inner,
-                key,
-                plan,
-                config,
-                patterns,
-                effective_names,
-                effective_allowlist,
-                summary,
-            );
-            if summary.redacted > count_before {
-                if vb {
-                    eprintln!(
-                        "[gate] field {:?} (jsonb) → REDACTED ({} field(s) inside)",
-                        kname,
-                        summary.redacted - count_before
-                    );
+    // Guard with a cheap byte check before paying the full parse cost.
+    if s.starts_with('{') || s.starts_with('[') {
+        if let Ok(inner) = serde_json::from_str::<Value>(&s) {
+            if matches!(inner, Value::Object(_) | Value::Array(_)) {
+                let count_before = summary.redacted;
+                let walked = walk(
+                    inner,
+                    key,
+                    plan,
+                    config,
+                    patterns,
+                    effective_names,
+                    effective_allowlist,
+                    summary,
+                );
+                if summary.redacted > count_before {
+                    if vb {
+                        eprintln!(
+                            "[gate] field {:?} (jsonb) → REDACTED ({} field(s) inside)",
+                            kname,
+                            summary.redacted - count_before
+                        );
+                    }
+                    return Value::String(serde_json::to_string(&walked).unwrap_or(s));
                 }
-                return Value::String(serde_json::to_string(&walked).unwrap_or(s));
+                return Value::String(s);
             }
-            return Value::String(s);
         }
     }
 
@@ -511,25 +514,30 @@ fn scan_string(
 
     // 6. Regex pattern scan. column_name_boost is not applied here: any column
     //    whose name matched the denylist was already handled in steps 1–3.
+    // Short-circuit on the first match whose confidence already clears the threshold —
+    // no need to continue scanning once we know we'll redact.
     let mut best: Option<(&str, f32)> = None;
     for p in patterns {
         if p.regex.is_match(&s) {
             let score = p.confidence;
+            if score >= config.confidence_threshold {
+                if vb {
+                    eprintln!(
+                        "[gate] field {:?} → REDACTED (step: regex, pattern: {}, score: {:.2})",
+                        kname,
+                        p.name.as_str(),
+                        score
+                    );
+                }
+                return do_redact(p.name.as_str(), &s, config, summary);
+            }
             if best.map(|(_, b)| score > b).unwrap_or(true) {
                 best = Some((p.name.as_str(), score));
             }
         }
     }
+    // No above-threshold match found; check if the best below-threshold match should warn.
     if let Some((name, score)) = best {
-        if score >= config.confidence_threshold {
-            if vb {
-                eprintln!(
-                    "[gate] field {:?} → REDACTED (step: regex, pattern: {}, score: {:.2})",
-                    kname, name, score
-                );
-            }
-            return do_redact(name, &s, config, summary);
-        }
         if vb {
             eprintln!(
                 "[gate] field {:?} → warned (step: regex, pattern: {}, score: {:.2} < threshold: {:.2})",

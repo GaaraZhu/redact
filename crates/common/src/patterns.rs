@@ -376,6 +376,7 @@ pub fn map_to_tier1_category(tier2: &str) -> &'static str {
     }
 }
 
+#[derive(Clone)]
 pub struct CompiledPattern {
     pub name: String,
     pub regex: Regex,
@@ -383,15 +384,24 @@ pub struct CompiledPattern {
 }
 
 impl CompiledPattern {
+    /// Returns the compiled builtins, compiling them once per process lifetime.
+    /// `Regex` is `Arc`-backed, so cloning is O(1).
+    fn compiled_builtins() -> &'static Vec<Self> {
+        static CACHE: OnceLock<Vec<CompiledPattern>> = OnceLock::new();
+        CACHE.get_or_init(|| {
+            BUILTIN_PATTERNS
+                .iter()
+                .map(|p| CompiledPattern {
+                    name: p.name.to_string(),
+                    regex: Regex::new(p.regex).expect("builtin regex is valid"),
+                    confidence: p.confidence,
+                })
+                .collect()
+        })
+    }
+
     pub fn from_builtins() -> Vec<Self> {
-        BUILTIN_PATTERNS
-            .iter()
-            .map(|p| CompiledPattern {
-                name: p.name.to_string(),
-                regex: Regex::new(p.regex).expect("builtin regex is valid"),
-                confidence: p.confidence,
-            })
-            .collect()
+        Self::compiled_builtins().clone()
     }
 
     /// Build compiled patterns from builtins, overlaying any user-supplied overrides.
@@ -399,7 +409,7 @@ impl CompiledPattern {
     pub fn from_config(
         user_patterns: &std::collections::HashMap<String, crate::config::Pattern>,
     ) -> Vec<Self> {
-        let mut patterns = Self::from_builtins();
+        let mut patterns = Self::compiled_builtins().clone();
         for (name, user_pat) in user_patterns {
             let regex = match Regex::new(&user_pat.regex) {
                 Ok(r) => r,
