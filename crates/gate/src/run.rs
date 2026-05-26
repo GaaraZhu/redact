@@ -1,4 +1,5 @@
 use std::io::{self, Read, Write};
+use std::time::Instant;
 
 use crate::command;
 use common::config::Config;
@@ -56,8 +57,12 @@ pub fn run(args: Vec<String>, verbose: bool) {
         None => (0, command::token_basename(&cmd_args[0])),
     };
 
-    // Gate 1: build redact plan from SQL if tool has sql_arg configured
+    // Gate 1: build redact plan from SQL if tool has sql_arg configured.
+    // Time only gate's own work (Gate 1 parse + Gate 2 redact) for the stats
+    // log — the wrapped tool's runtime is excluded since it runs regardless.
+    let gate1_start = Instant::now();
     let mut plan = build_gate1_plan(cmd_args, &basename, &config);
+    let gate1_us = gate1_start.elapsed().as_micros() as u64;
 
     if verbose {
         eprintln!("[gate] === Gate 1 ===");
@@ -152,13 +157,16 @@ pub fn run(args: Vec<String>, verbose: bool) {
     };
 
     // Gate 2
+    let redact_start = Instant::now();
     let (redacted, redact_stats) = redact_with_stats(payload, &plan, &config.pii);
+    let overhead_us = gate1_us + redact_start.elapsed().as_micros() as u64;
 
     if config.stats.enabled {
         let event = stats::Event::now(
             "bash",
             &basename,
             redact_stats.total,
+            overhead_us,
             redact_stats.type_counts,
         );
         let _ = stats::record(&event);
@@ -196,13 +204,16 @@ fn redact_stdin(verbose: bool, config: &Config) {
         }
     };
 
+    let redact_start = Instant::now();
     let (redacted, redact_stats) = redact_with_stats(payload, &plan, &config.pii);
+    let overhead_us = redact_start.elapsed().as_micros() as u64;
 
     if config.stats.enabled {
         let event = stats::Event::now(
             "bash",
             "stdin",
             redact_stats.total,
+            overhead_us,
             redact_stats.type_counts,
         );
         let _ = stats::record(&event);

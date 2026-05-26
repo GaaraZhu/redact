@@ -100,18 +100,26 @@ pub fn redact_tools_call_response(
         let mut stats_out = None;
         if let Some(result) = msg.get_mut("result") {
             let result_value = result.take();
+            let start = std::time::Instant::now();
             let (redacted, rs) = redact_with_stats(result_value, &RedactPlan::empty(), config);
+            let overhead_us = start.elapsed().as_micros() as u64;
             *result = redacted;
-            stats_out = Some(rs);
+            stats_out = Some((rs, overhead_us));
         }
         (msg, stats_out)
     }));
 
     match redact_result {
         Ok((redacted, stats_out)) => {
-            if let (Some(server_name), Some(rs)) = (record_as, stats_out) {
+            if let (Some(server_name), Some((rs, overhead_us))) = (record_as, stats_out) {
                 if rs.total > 0 {
-                    let event = stats::Event::now("mcp", server_name, rs.total, rs.type_counts);
+                    let event = stats::Event::now(
+                        "mcp",
+                        server_name,
+                        rs.total,
+                        overhead_us,
+                        rs.type_counts,
+                    );
                     let _ = stats::record(&event);
                 }
             }

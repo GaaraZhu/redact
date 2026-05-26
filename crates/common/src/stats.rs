@@ -1,9 +1,9 @@
 //! Append-only JSONL stats log for `gate retro`.
 //!
-//! One line per redaction event. Counts only — never values, never SQL, never
-//! command lines. Written via single-syscall `O_APPEND` writes so concurrent
-//! producers (parallel `gate run` subprocesses and long-lived `gate mcp`
-//! proxies) cannot interleave bytes on POSIX or Windows.
+//! One line per redaction event. Counts and timings only — never values, never
+//! SQL, never command lines. Written via single-syscall `O_APPEND` writes so
+//! concurrent producers (parallel `gate run` subprocesses and long-lived
+//! `gate mcp` proxies) cannot interleave bytes on POSIX or Windows.
 //!
 //! Failure is never propagated to callers: stats are nice-to-have, and the
 //! redaction pipeline must keep working even if the stats file is unwritable.
@@ -27,6 +27,13 @@ pub struct Event {
     pub tool: String,
     /// Total PII fields redacted in this event.
     pub fields_redacted: usize,
+    /// Microseconds gate spent processing this query (Gate 1 parse + Gate 2
+    /// redact on the bash path; Gate 2 redact only on the stdin/mcp paths).
+    /// Excludes the wrapped tool's own runtime. `#[serde(default)]` keeps
+    /// events written before this field was added parseable (they read as 0,
+    /// which `gate retro` treats as "no timing recorded").
+    #[serde(default)]
+    pub overhead_us: u64,
     /// Per-PII-type counts, e.g. `{"email": 23, "ssn": 8}`.
     pub types: HashMap<String, usize>,
 }
@@ -37,6 +44,7 @@ impl Event {
         path: &str,
         tool: &str,
         fields_redacted: usize,
+        overhead_us: u64,
         types: HashMap<String, usize>,
     ) -> Self {
         Self {
@@ -44,6 +52,7 @@ impl Event {
             path: path.to_string(),
             tool: tool.to_string(),
             fields_redacted,
+            overhead_us,
             types,
         }
     }
@@ -209,6 +218,7 @@ mod tests {
             "bash",
             tool,
             total,
+            42,
             types.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
         )
     }
@@ -224,6 +234,26 @@ mod tests {
             assert_eq!(parsed.fields_redacted, 3);
             assert_eq!(parsed.types.get("email"), Some(&2));
             assert_eq!(parsed.types.get("ssn"), Some(&1));
+        });
+    }
+
+    #[test]
+    fn legacy_event_without_overhead_field_parses_as_zero() {
+        // Events written before `overhead_us` existed must still deserialize.
+        let legacy =
+            r#"{"ts":1,"path":"bash","tool":"tkpsql","fields_redacted":3,"types":{"email":3}}"#;
+        let parsed: Event = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.overhead_us, 0);
+        assert_eq!(parsed.fields_redacted, 3);
+    }
+
+    #[test]
+    fn record_roundtrips_overhead_us() {
+        with_stats_path(|path| {
+            record(&Event::now("bash", "tkpsql", 1, 1234, HashMap::new())).unwrap();
+            let contents = std::fs::read_to_string(path).unwrap();
+            let parsed: Event = serde_json::from_str(contents.trim()).unwrap();
+            assert_eq!(parsed.overhead_us, 1234);
         });
     }
 
