@@ -23,6 +23,21 @@ AI agents increasingly access internal databases and APIs through CLI tools, scr
 
 `gate` intercepts query results before they reach the model and automatically redacts detected PII fields without requiring changes to existing agent workflows or prompts. It covers both access paths agents use: **Bash commands** (via a harness hook) and **MCP server calls** (via a wrap-style stdio proxy), adding < 10 ms of overhead per query.
 
+## Why rules, not a model?
+
+Most PII guardrails for AI agents are themselves LLMs — they send your data to a model to decide whether it's sensitive. Gate takes the opposite approach.
+
+| | gate | LLM-based redaction |
+|---|---|---|
+| Decision method | Regex + column heuristics + Luhn | Model inference |
+| Deterministic | ✅ Same input always produces the same output | ❌ Varies by run and model version |
+| Data stays local | ✅ Never leaves your machine | ❌ Sent to a model API for classification |
+| Latency | ✅ < 10ms overhead | ❌ Adds an API round-trip |
+| Auditable | ✅ Every decision traceable to an explicit rule | ❌ Model reasoning is opaque |
+| Known gaps | ✅ Documented — free-text prose | ❌ False-negative rate unknown |
+
+The trade-off gate makes: rules can't catch PII in unstructured free-text prose. The [threat model](THREAT-MODEL.md) documents what gate doesn't cover.
+
 ## Demo
 
 The demo walks through three steps:
