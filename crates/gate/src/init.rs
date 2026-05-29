@@ -7,6 +7,7 @@ const HOOK_COMMAND: &str = "gate hook";
 const COPILOT_HOOK_COMMAND: &str = "gate hook --format copilot";
 const CURSOR_HOOK_COMMAND: &str = "gate hook --format cursor";
 const CODEX_HOOK_COMMAND: &str = "gate hook --format codex";
+const GEMINI_HOOK_COMMAND: &str = "gate hook --format gemini";
 
 pub fn run(
     harness: &str,
@@ -71,9 +72,16 @@ pub fn run(
                 };
                 wrap_mcp_codex(&path, filter.as_deref(), yes);
             }
+            "gemini" => {
+                let path = match gemini_settings_path(scope) {
+                    Ok(p) => p,
+                    Err(e) => exit_with_error(&e),
+                };
+                wrap_mcp_claude(&path, filter.as_deref(), yes);
+            }
             _ => exit_with_error(&format!(
                 "--wrap-mcp is not supported for harness '{harness}'; \
-                 supported: claude-code, opencode, copilot-cli, cursor, codex"
+                 supported: claude-code, opencode, copilot-cli, cursor, codex, gemini"
             )),
         }
         return;
@@ -122,9 +130,16 @@ pub fn run(
                 };
                 register_mcp_server_codex(&path, server_name, cmd_str);
             }
+            "gemini" => {
+                let path = match gemini_settings_path(scope) {
+                    Ok(p) => p,
+                    Err(e) => exit_with_error(&e),
+                };
+                register_mcp_server(&path, server_name, cmd_str);
+            }
             _ => exit_with_error(&format!(
                 "MCP registration is not supported for harness '{harness}'; \
-                 supported: claude-code, opencode, copilot-cli, cursor, codex"
+                 supported: claude-code, opencode, copilot-cli, cursor, codex, gemini"
             )),
         }
         return;
@@ -142,8 +157,9 @@ pub fn run(
         "copilot-cli" => init_copilot_cli(),
         "cursor" => init_cursor(scope),
         "codex" => init_codex(scope),
+        "gemini" => init_gemini(scope),
         _ => exit_with_error(&format!(
-            "unsupported harness '{harness}'; supported: claude-code, opencode, copilot-cli, cursor, codex. \
+            "unsupported harness '{harness}'; supported: claude-code, opencode, copilot-cli, cursor, codex, gemini. \
              Usage: gate init --harness <harness>"
         )),
     }
@@ -1155,6 +1171,129 @@ fn insert_codex_hook(mut settings: Value) -> CodexHookResult {
     }
 
     CodexHookResult::Done(settings)
+}
+
+// ── Gemini CLI hook installation ─────────────────────────────────────────────
+
+/// Resolve the Gemini CLI settings path for the given scope.
+/// Hooks and MCP servers share the same file.
+/// "project" → `.gemini/settings.json`; anything else → `~/.gemini/settings.json`.
+pub(crate) fn gemini_settings_path(scope: &str) -> Result<PathBuf, String> {
+    if scope == "project" {
+        return Ok(PathBuf::from(".gemini").join("settings.json"));
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "cannot resolve home directory: set HOME or USERPROFILE".to_string())?;
+    Ok(PathBuf::from(home).join(".gemini").join("settings.json"))
+}
+
+/// Returns true if a `hooks.BeforeTool` entry contains any variant of `gate hook ...`.
+pub(crate) fn gemini_entry_has_gate_hook(entry: &Value) -> bool {
+    entry
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .map(|hooks| {
+            hooks.iter().any(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(is_gate_hook_variant)
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn new_gemini_hook_entry() -> Value {
+    json!({
+        "matcher": "^run_shell_command$",
+        "hooks": [{ "type": "command", "command": GEMINI_HOOK_COMMAND }]
+    })
+}
+
+fn init_gemini(scope: &str) {
+    let path = match gemini_settings_path(scope) {
+        Ok(p) => p,
+        Err(e) => exit_with_error(&format!("cannot resolve gemini settings path: {e}")),
+    };
+    run_gemini_with_path(&path);
+}
+
+fn run_gemini_with_path(path: &Path) {
+    let settings = read_settings(path);
+    match insert_gemini_hook(settings) {
+        GeminiHookResult::AlreadyInstalled => {
+            println!("gate hook is already installed in {}", path.display());
+        }
+        GeminiHookResult::Done(updated) => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap_or_else(|e| {
+                    exit_with_error(&format!("failed to create {}: {e}", parent.display()))
+                });
+            }
+            write_atomic(path, &updated).unwrap_or_else(|e| {
+                exit_with_error(&format!("failed to write {}: {e}", path.display()))
+            });
+            println!("gate hook installed in {}", path.display());
+            println!("Run `gate config` to define which tools to intercept.");
+        }
+    }
+}
+
+enum GeminiHookResult {
+    AlreadyInstalled,
+    Done(Value),
+}
+
+fn insert_gemini_hook(mut settings: Value) -> GeminiHookResult {
+    normalize_gemini_settings(&mut settings);
+
+    let already = {
+        let arr = settings["hooks"]["BeforeTool"].as_array().unwrap();
+        arr.iter().any(|entry| {
+            entry
+                .get("hooks")
+                .and_then(|h| h.as_array())
+                .map(|hooks| {
+                    hooks.iter().any(|h| {
+                        h.get("command").and_then(|c| c.as_str()) == Some(GEMINI_HOOK_COMMAND)
+                    })
+                })
+                .unwrap_or(false)
+        })
+    };
+    if already {
+        return GeminiHookResult::AlreadyInstalled;
+    }
+
+    {
+        let arr = settings["hooks"]["BeforeTool"].as_array_mut().unwrap();
+        arr.retain(|entry| !gemini_entry_has_gate_hook(entry));
+        arr.push(new_gemini_hook_entry());
+    }
+
+    GeminiHookResult::Done(settings)
+}
+
+fn normalize_gemini_settings(settings: &mut Value) {
+    if !settings.is_object() {
+        *settings = json!({});
+    }
+    let obj = settings.as_object_mut().unwrap();
+
+    let hooks = obj.entry("hooks".to_string()).or_insert_with(|| json!({}));
+    if !hooks.is_object() {
+        *hooks = json!({});
+    }
+
+    let before_tool = hooks
+        .as_object_mut()
+        .unwrap()
+        .entry("BeforeTool".to_string())
+        .or_insert_with(|| json!([]));
+    if !before_tool.is_array() {
+        *before_tool = json!([]);
+    }
 }
 
 /// Walk up from CWD to find the root of the current git repository.
@@ -2413,5 +2552,157 @@ mod tests {
         let toml = "[s]\ncommand = \"uvx\"\nargs = [\"mcp-server-postgres\"]\n";
         let doc = toml.parse::<toml_edit::DocumentMut>().unwrap();
         assert!(!is_codex_gate_mcp_proxy(&doc["s"]));
+    }
+
+    // ── gemini init ───────────────────────────────────────────────────────────
+
+    fn tmp_gemini_path() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn gemini_settings_path_global_uses_home() {
+        let _lock = HOME_LOCK.lock().unwrap();
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", "/test/home") };
+        let path = gemini_settings_path("global").unwrap();
+        match saved {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        assert_eq!(path, PathBuf::from("/test/home/.gemini/settings.json"));
+    }
+
+    #[test]
+    fn gemini_settings_path_project_is_relative() {
+        let path = gemini_settings_path("project").unwrap();
+        assert_eq!(path, PathBuf::from(".gemini/settings.json"));
+    }
+
+    #[test]
+    fn gemini_creates_hook_from_empty_file() {
+        let (_dir, path) = tmp_gemini_path();
+        run_gemini_with_path(&path);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let arr = v["hooks"]["BeforeTool"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(
+            arr[0]["hooks"][0]["command"].as_str().unwrap(),
+            GEMINI_HOOK_COMMAND
+        );
+        assert_eq!(arr[0]["matcher"].as_str().unwrap(), "^run_shell_command$");
+    }
+
+    #[test]
+    fn gemini_idempotent_on_second_run() {
+        let (_dir, path) = tmp_gemini_path();
+        run_gemini_with_path(&path);
+        run_gemini_with_path(&path);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let arr = v["hooks"]["BeforeTool"].as_array().unwrap();
+        let gate_count = arr.iter().filter(|e| gemini_entry_has_gate_hook(e)).count();
+        assert_eq!(gate_count, 1);
+    }
+
+    #[test]
+    fn gemini_preserves_existing_non_gate_entry() {
+        let (_dir, path) = tmp_gemini_path();
+        let initial = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^read_file$", "hooks": [{ "type": "command", "command": "other-hook" }] }
+                ]
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        run_gemini_with_path(&path);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let arr = v["hooks"]["BeforeTool"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        let cmds: Vec<&str> = arr
+            .iter()
+            .filter_map(|e| e["hooks"][0]["command"].as_str())
+            .collect();
+        assert!(cmds.contains(&"other-hook"));
+        assert!(cmds.contains(&GEMINI_HOOK_COMMAND));
+    }
+
+    #[test]
+    fn gemini_replaces_absolute_path_variant() {
+        let (_dir, path) = tmp_gemini_path();
+        let initial = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": "/usr/local/bin/gate hook --format gemini" }] }
+                ]
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        run_gemini_with_path(&path);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let arr = v["hooks"]["BeforeTool"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(
+            arr[0]["hooks"][0]["command"].as_str().unwrap(),
+            GEMINI_HOOK_COMMAND
+        );
+    }
+
+    #[test]
+    fn gemini_preserves_mcp_servers_when_hook_added() {
+        let (_dir, path) = tmp_gemini_path();
+        let initial = json!({
+            "mcpServers": {
+                "postgres": { "command": "uvx", "args": ["mcp-server-postgres"], "env": {} }
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        run_gemini_with_path(&path);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(
+            v["mcpServers"]["postgres"].is_object(),
+            "mcpServers must survive hook install"
+        );
+        assert!(v["hooks"]["BeforeTool"].as_array().unwrap().len() == 1);
+    }
+
+    #[test]
+    fn gemini_register_mcp_preserves_hooks_key() {
+        let (_dir, path) = tmp_gemini_path();
+        let initial = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": GEMINI_HOOK_COMMAND }] }
+                ]
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+        register_mcp_server(&path, "postgres", "uvx mcp-server-postgres");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["postgres"]["command"], "gate");
+        assert!(
+            v["hooks"]["BeforeTool"].as_array().is_some(),
+            "hooks must survive MCP register"
+        );
+    }
+
+    #[test]
+    fn gemini_entry_has_gate_hook_detects_exact() {
+        let entry = json!({ "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": GEMINI_HOOK_COMMAND }] });
+        assert!(gemini_entry_has_gate_hook(&entry));
+    }
+
+    #[test]
+    fn gemini_entry_has_gate_hook_detects_absolute_path() {
+        let entry = json!({ "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": "/usr/local/bin/gate hook --format gemini" }] });
+        assert!(gemini_entry_has_gate_hook(&entry));
+    }
+
+    #[test]
+    fn gemini_entry_has_gate_hook_ignores_other_entries() {
+        let entry = json!({ "matcher": "^read_file$", "hooks": [{ "type": "command", "command": "other-hook" }] });
+        assert!(!gemini_entry_has_gate_hook(&entry));
     }
 }

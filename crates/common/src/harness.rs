@@ -6,6 +6,7 @@ const HARNESS_VARS: &[&str] = &[
     "CURSOR_AGENT",
     "CURSOR_TRACE_ID",
     "CODEX_THREAD_ID",
+    "GEMINI_CLI",
 ];
 
 pub fn is_agent_harness() -> bool {
@@ -93,5 +94,10 @@ mod tests {
     #[test]
     fn codex_thread_id_detected() {
         assert!(with_only_var("CODEX_THREAD_ID", is_agent_harness));
+    }
+
+    #[test]
+    fn gemini_cli_detected() {
+        assert!(with_only_var("GEMINI_CLI", is_agent_harness));
     }
 }

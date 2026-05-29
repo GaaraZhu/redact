@@ -1,6 +1,7 @@
 use crate::init::{
     claude_settings_path, codex_hooks_path, copilot_entry_has_gate_hook,
     cursor_entry_has_gate_hook, cursor_hooks_path, entry_has_gate_hook, find_git_root,
+    gemini_entry_has_gate_hook, gemini_settings_path,
 };
 use crate::init_opencode::{has_gate_header, plugin_path};
 use common::config::config_path;
@@ -19,6 +20,7 @@ enum Action {
     CopilotHook(PathBuf),
     CursorHook(PathBuf),
     CodexHook(PathBuf),
+    GeminiHook(PathBuf),
     StatsFile(PathBuf),
 }
 
@@ -31,6 +33,7 @@ impl Action {
             Action::CopilotHook(p) => format!("Remove gate hook entry from {}", p.display()),
             Action::CursorHook(p) => format!("Remove gate hook entry from {}", p.display()),
             Action::CodexHook(p) => format!("Remove gate hook entry from {}", p.display()),
+            Action::GeminiHook(p) => format!("Remove gate hook entry from {}", p.display()),
             Action::StatsFile(p) => format!("Delete stats log {}", p.display()),
         }
     }
@@ -85,6 +88,11 @@ fn collect_actions() -> Vec<Action> {
     }
     for scope in &["global", "project"] {
         if let Some(a) = plan_remove_codex_hook(scope) {
+            actions.push(a);
+        }
+    }
+    for scope in &["global", "project"] {
+        if let Some(a) = plan_remove_gemini_hook(scope) {
             actions.push(a);
         }
     }
@@ -208,6 +216,38 @@ fn plan_remove_codex_hook(scope: &str) -> Option<Action> {
     }
 }
 
+fn plan_remove_gemini_hook(scope: &str) -> Option<Action> {
+    let path = gemini_settings_path(scope).ok()?;
+    if !path.exists() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let settings: Value = serde_json::from_str(&contents).ok()?;
+    let arr = settings
+        .get("hooks")
+        .and_then(|h| h.get("BeforeTool"))
+        .and_then(|p| p.as_array())?;
+    if arr.iter().any(gemini_entry_has_gate_hook) {
+        Some(Action::GeminiHook(path))
+    } else {
+        None
+    }
+}
+
+fn strip_gemini_gate_hook(settings: &mut Value) -> bool {
+    let arr = match settings
+        .get_mut("hooks")
+        .and_then(|h| h.get_mut("BeforeTool"))
+        .and_then(|p| p.as_array_mut())
+    {
+        Some(a) => a,
+        None => return false,
+    };
+    let before = arr.len();
+    arr.retain(|entry| !gemini_entry_has_gate_hook(entry));
+    arr.len() < before
+}
+
 fn strip_codex_gate_hook(settings: &mut Value) -> bool {
     let arr = match settings
         .get_mut("hooks")
@@ -315,6 +355,27 @@ fn execute_action(action: &Action) {
                 }
             };
             strip_codex_gate_hook(&mut settings);
+            match write_atomic(path, &settings) {
+                Ok(()) => println!("Removed hook from {}", path.display()),
+                Err(e) => eprintln!("gate: failed to write {}: {e}", path.display()),
+            }
+        }
+        Action::GeminiHook(path) => {
+            let contents = match std::fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("gate: failed to read {}: {e}", path.display());
+                    return;
+                }
+            };
+            let mut settings: Value = match serde_json::from_str(&contents) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("gate: failed to parse {}: {e}", path.display());
+                    return;
+                }
+            };
+            strip_gemini_gate_hook(&mut settings);
             match write_atomic(path, &settings) {
                 Ok(()) => println!("Removed hook from {}", path.display()),
                 Err(e) => eprintln!("gate: failed to write {}: {e}", path.display()),
@@ -876,5 +937,126 @@ mod tests {
         fs::write(&path, serde_json::to_string_pretty(&settings).unwrap()).unwrap();
         execute_action(&Action::CodexHook(path.clone()));
         assert!(!dir.path().join("hooks.json.gate_tmp").exists());
+    }
+
+    // ── strip_gemini_gate_hook ───────────────────────────────────────────────
+
+    #[test]
+    fn strip_gemini_noop_when_no_hooks_key() {
+        let mut s = json!({});
+        assert!(!strip_gemini_gate_hook(&mut s));
+    }
+
+    #[test]
+    fn strip_gemini_removes_gate_entry() {
+        let mut s = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": "gate hook --format gemini" }] }
+                ]
+            }
+        });
+        assert!(strip_gemini_gate_hook(&mut s));
+        assert!(s["hooks"]["BeforeTool"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn strip_gemini_removes_absolute_path_variant() {
+        let mut s = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": "/usr/local/bin/gate hook --format gemini" }] }
+                ]
+            }
+        });
+        assert!(strip_gemini_gate_hook(&mut s));
+        assert!(s["hooks"]["BeforeTool"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn strip_gemini_preserves_unrelated_entries() {
+        let mut s = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^read_file$", "hooks": [{ "type": "command", "command": "other-hook" }] },
+                    { "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": "gate hook --format gemini" }] }
+                ]
+            }
+        });
+        assert!(strip_gemini_gate_hook(&mut s));
+        let arr = s["hooks"]["BeforeTool"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(
+            arr[0]["hooks"][0]["command"].as_str().unwrap(),
+            "other-hook"
+        );
+    }
+
+    #[test]
+    fn strip_gemini_preserves_mcp_servers() {
+        let mut s = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": "gate hook --format gemini" }] }
+                ]
+            },
+            "mcpServers": {
+                "postgres": { "command": "gate", "args": ["mcp", "--", "uvx", "mcp-server-postgres"] }
+            }
+        });
+        assert!(strip_gemini_gate_hook(&mut s));
+        assert!(s["hooks"]["BeforeTool"].as_array().unwrap().is_empty());
+        assert!(
+            s["mcpServers"]["postgres"].is_object(),
+            "mcpServers must survive hook strip"
+        );
+    }
+
+    #[test]
+    fn strip_gemini_noop_when_no_gate_entry() {
+        let mut s = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^read_file$", "hooks": [{ "type": "command", "command": "other-hook" }] }
+                ]
+            }
+        });
+        assert!(!strip_gemini_gate_hook(&mut s));
+        assert_eq!(s["hooks"]["BeforeTool"].as_array().unwrap().len(), 1);
+    }
+
+    // ── execute_action: GeminiHook ───────────────────────────────────────────
+
+    #[test]
+    fn execute_gemini_hook_writes_updated_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let settings = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": "gate hook --format gemini" }] }
+                ]
+            }
+        });
+        fs::write(&path, serde_json::to_string_pretty(&settings).unwrap()).unwrap();
+        execute_action(&Action::GeminiHook(path.clone()));
+        let result: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(result["hooks"]["BeforeTool"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn execute_gemini_hook_leaves_no_tmp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let settings = json!({
+            "hooks": {
+                "BeforeTool": [
+                    { "matcher": "^run_shell_command$", "hooks": [{ "type": "command", "command": "gate hook --format gemini" }] }
+                ]
+            }
+        });
+        fs::write(&path, serde_json::to_string_pretty(&settings).unwrap()).unwrap();
+        execute_action(&Action::GeminiHook(path.clone()));
+        assert!(!dir.path().join("settings.json.gate_tmp").exists());
     }
 }

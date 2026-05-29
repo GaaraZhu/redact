@@ -157,6 +157,40 @@ fn report_harness_installations() {
         }
     }
 
+    // Gemini CLI global
+    if let Ok(home) = std::env::var("HOME") {
+        let path = PathBuf::from(&home).join(".gemini").join("settings.json");
+        if path.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if v["hooks"]["BeforeTool"]
+                        .as_array()
+                        .map(|arr| arr.iter().any(crate::init::gemini_entry_has_gate_hook))
+                        .unwrap_or(false)
+                    {
+                        hooks.push(format!("Gemini CLI ({})", path.display()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Gemini CLI project
+    let gemini_project_path = PathBuf::from(".gemini").join("settings.json");
+    if gemini_project_path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&gemini_project_path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if v["hooks"]["BeforeTool"]
+                    .as_array()
+                    .map(|arr| arr.iter().any(crate::init::gemini_entry_has_gate_hook))
+                    .unwrap_or(false)
+                {
+                    hooks.push("Gemini CLI (.gemini/settings.json)".to_string());
+                }
+            }
+        }
+    }
+
     // Copilot CLI (project-level only)
     if in_git_repo {
         let copilot_path = PathBuf::from(".github")
@@ -266,6 +300,20 @@ fn report_harness_installations() {
         mcp_wraps.push("opencode (opencode.json)".to_string());
     }
 
+    // Gemini CLI MCP wrap (global): ~/.gemini/settings.json
+    if let Some(ref h) = home {
+        let path = PathBuf::from(h).join(".gemini").join("settings.json");
+        if has_gate_mcp_wrap(&path, "mcpServers") {
+            mcp_wraps.push(format!("Gemini CLI ({})", path.display()));
+        }
+    }
+
+    // Gemini CLI MCP wrap (project): .gemini/settings.json
+    let gemini_mcp_project = PathBuf::from(".gemini").join("settings.json");
+    if has_gate_mcp_wrap(&gemini_mcp_project, "mcpServers") {
+        mcp_wraps.push("Gemini CLI (.gemini/settings.json)".to_string());
+    }
+
     // Codex MCP wrap (global): ~/.codex/config.toml
     if let Some(ref h) = home {
         let path = PathBuf::from(h).join(".codex").join("config.toml");
@@ -282,7 +330,7 @@ fn report_harness_installations() {
 
     if hooks.is_empty() && mcp_wraps.is_empty() {
         println!("No harness integrations detected.");
-        println!("Run `gate init` (Claude Code) or `gate init --harness <opencode|cursor|copilot-cli|codex>` to install.");
+        println!("Run `gate init` (Claude Code) or `gate init --harness <opencode|cursor|copilot-cli|codex|gemini>` to install.");
     } else {
         if !hooks.is_empty() {
             println!("Bash hooks:");

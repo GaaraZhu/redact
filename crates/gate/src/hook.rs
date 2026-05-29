@@ -12,6 +12,7 @@ enum Format {
     Copilot,
     Cursor,
     Codex,
+    Gemini,
 }
 
 pub fn run(format: &str) {
@@ -20,9 +21,10 @@ pub fn run(format: &str) {
         "copilot" => Format::Copilot,
         "cursor" => Format::Cursor,
         "codex" => Format::Codex,
+        "gemini" => Format::Gemini,
         _ => {
             eprintln!(
-                "gate hook: unknown format '{format}'; supported: claude-code, copilot, cursor, codex"
+                "gate hook: unknown format '{format}'; supported: claude-code, copilot, cursor, codex, gemini"
             );
             std::process::exit(1);
         }
@@ -153,6 +155,14 @@ fn process(stdin: &str, config: &Config, format: Format) -> Option<String> {
             })
             .to_string(),
         ),
+        Format::Gemini => Some(
+            json!({
+                "hookSpecificOutput": {
+                    "tool_input": updated_input,
+                }
+            })
+            .to_string(),
+        ),
     }
 }
 
@@ -183,6 +193,12 @@ fn block_response(message: &str, format: &Format) -> String {
             "permission": "deny",
             "user_message": message,
             "agent_message": message,
+        })
+        .to_string(),
+        Format::Gemini => json!({
+            "decision": "deny",
+            "reason": message,
+            "continue": true,
         })
         .to_string(),
     }
@@ -1154,6 +1170,74 @@ mod tests {
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(
             v["hookSpecificOutput"]["updatedInput"]["restart"],
+            json!(false)
+        );
+    }
+
+    // ── gemini format tests ───────────────────────────────────────────────────
+
+    fn process_gemini(stdin: &str, config: &Config) -> Option<String> {
+        process(stdin, config, Format::Gemini)
+    }
+
+    fn is_gemini_deny(output: &str) -> bool {
+        let v: Value = serde_json::from_str(output).unwrap();
+        v["decision"].as_str().unwrap_or("") == "deny"
+    }
+
+    #[test]
+    fn gemini_format_passthrough_is_none() {
+        let _guard = LOCK.lock().unwrap();
+        let config = default_config();
+        assert!(process_gemini(&make_input("ls -la"), &config).is_none());
+    }
+
+    #[test]
+    fn gemini_format_blocks_gate_enable() {
+        let _guard = LOCK.lock().unwrap();
+        let config = default_config();
+        let out = process_gemini(&make_input("gate enable"), &config).unwrap();
+        assert!(is_gemini_deny(&out));
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["reason"].as_str().is_some());
+        assert_eq!(v["continue"], json!(true));
+        assert!(v.get("hookSpecificOutput").is_none());
+        assert!(v.get("permissionDecision").is_none());
+    }
+
+    #[test]
+    fn gemini_format_rewrite_emits_hook_specific_tool_input() {
+        let _guard = LOCK.lock().unwrap();
+        let config = default_config();
+        let out =
+            process_gemini(&make_input("psql -c 'SELECT email FROM users'"), &config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let cmd = v["hookSpecificOutput"]["tool_input"]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.starts_with("gate run -- psql"), "got: {cmd}");
+        assert!(v["hookSpecificOutput"].get("updatedInput").is_none());
+        assert!(v.get("permissionDecision").is_none());
+        assert!(v.get("permission").is_none());
+    }
+
+    #[test]
+    fn gemini_format_preserves_extra_tool_input_fields() {
+        let _guard = LOCK.lock().unwrap();
+        let config = default_config();
+        let input = json!({
+            "hook_event_name": "BeforeTool",
+            "tool_name": "run_shell_command",
+            "tool_input": {
+                "command": "tkpsql --sql 'SELECT 1'",
+                "restart": false
+            }
+        })
+        .to_string();
+        let out = process_gemini(&input, &config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v["hookSpecificOutput"]["tool_input"]["restart"],
             json!(false)
         );
     }

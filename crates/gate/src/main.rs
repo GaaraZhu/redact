@@ -9,6 +9,7 @@ enum Harness {
     #[value(name = "copilot-cli")]
     CopilotCli,
     Codex,
+    Gemini,
 }
 
 impl Harness {
@@ -19,6 +20,7 @@ impl Harness {
             Self::Cursor => "cursor",
             Self::CopilotCli => "copilot-cli",
             Self::Codex => "codex",
+            Self::Gemini => "gemini",
         }
     }
 }
@@ -30,6 +32,7 @@ enum HookFormat {
     Copilot,
     Cursor,
     Codex,
+    Gemini,
 }
 
 impl HookFormat {
@@ -39,6 +42,7 @@ impl HookFormat {
             Self::Copilot => "copilot",
             Self::Cursor => "cursor",
             Self::Codex => "codex",
+            Self::Gemini => "gemini",
         }
     }
 }
