@@ -48,7 +48,7 @@ The demo walks through three steps:
 
 ![gate intercepting PII before it reaches the model](assets/demo.gif)
 
-Also works with OpenCode, Cursor, GitHub Copilot CLI, and Codex CLI — see [Supported AI Tools](#supported-ai-tools) for the full compatibility matrix.
+Also works with OpenCode, Cursor, GitHub Copilot CLI, Codex CLI, and Gemini CLI — see [Supported AI Tools](#supported-ai-tools) for the full compatibility matrix.
 
 > For the design rationale, threat-model walkthrough, and detection-pipeline deep dive, read [**Introducing gate**](https://gaarazhu.github.io/introducing-gate/).
 
@@ -112,9 +112,12 @@ For false positives (e.g. `city` in a `products` table), run `gate scan --review
 
    # Codex CLI
    gate init --harness codex
+
+   # Gemini CLI
+   gate init --harness gemini
    ```
 
-   Add `--scope project` for project-only setup. Restart your OpenCode or Cursor session after `gate init` to load the hook. For Codex CLI, restart the session, then review the hook in the Trust & Permissions UI, mark it as trusted, and enable it. For Copilot CLI, the generated `.github/hooks/PreToolUse.json` is gitignored by default — each developer runs `gate init --harness copilot-cli` once in their local clone.
+   Add `--scope project` for project-only setup. Restart your OpenCode, Cursor, or Gemini CLI session after `gate init` to load the hook. For Codex CLI, restart the session, then review the hook in the Trust & Permissions UI, mark it as trusted, and enable it. For Copilot CLI, the generated `.github/hooks/PreToolUse.json` is gitignored by default — each developer runs `gate init --harness copilot-cli` once in their local clone.
 
 4. *(Optional)* **Register MCP server proxies** so `tools/call` responses also pass through gate:
 
@@ -133,6 +136,9 @@ For false positives (e.g. `city` in a `products` table), run `gate scan --review
 
    # Codex CLI
    gate init --harness codex --wrap-mcp --yes
+
+   # Gemini CLI
+   gate init --harness gemini --wrap-mcp --yes
    ```
 
    Add `--scope project` for project-level MCP config. For Cursor project-scoped MCP, re-enable the servers in **Settings → Tools & MCPs** after registration. See [docs/mcp.md](docs/mcp.md) for `--servers`, per-harness paths, and manual single-server registration.
@@ -147,7 +153,7 @@ Run `gate validate` to confirm your config is valid before the first session.
 
 ### Bash tooling path
 
-Every Bash command passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which spawns the subprocess and pipes stdout through the two-gate detection pipeline. The rewrite happens in the harness's pre-tool-execution hook — it is **enforcing** in Claude Code, OpenCode, Cursor, GitHub Copilot CLI, and Codex CLI; the agent cannot bypass it. Humans and CI scripts running outside the harness are untouched.
+Every Bash command passes through `gate hook` first. Commands that match a configured tool are silently rewritten to `gate run -- <original command>`, which spawns the subprocess and pipes stdout through the two-gate detection pipeline. The rewrite happens in the harness's pre-tool-execution hook — it is **enforcing** in Claude Code, OpenCode, Cursor, GitHub Copilot CLI, Codex CLI, and Gemini CLI; the agent cannot bypass it. Humans and CI scripts running outside the harness are untouched.
 
 ```
 AI asks to run: tkpsql query --sql "SELECT * FROM users"
@@ -265,7 +271,7 @@ sudo gate protect      # any future enable/disable/config/allowlist now needs su
 sudo gate unprotect    # restore direct write access
 ```
 
-Enforced at the OS level across all harnesses (Claude Code, OpenCode, Cursor, GitHub Copilot CLI, Codex CLI). Not supported on Windows.
+Enforced at the OS level across all harnesses (Claude Code, OpenCode, Cursor, GitHub Copilot CLI, Codex CLI, Gemini CLI). Not supported on Windows.
 
 ## Supported AI Tools
 
@@ -276,6 +282,7 @@ Enforced at the OS level across all harnesses (Claude Code, OpenCode, Cursor, Gi
 | [OpenCode](https://opencode.ai) | ✅ | ✅ | Restart session after `gate init` to load the hook |
 | [GitHub Copilot CLI](https://github.com/features/copilot) | ✅ | ✅ | Hook is project-scoped; each developer runs `gate init` once |
 | [Codex CLI](https://github.com/openai/codex) | ✅ | ✅ | After `gate init`, restart session and trust + enable the hook in the Permissions UI |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | ✅ | ✅ | Restart session after `gate init` to load the hook |
 
 ## Documentation
 
