@@ -1,6 +1,6 @@
 [package]
 name = "gate"
-version = "0.8.9"
+version = "0.9.0"
 edition = "2021"
 
 [dependencies]
