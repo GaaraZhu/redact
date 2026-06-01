@@ -82,10 +82,10 @@ pub const BUILTIN_PATTERNS: &[BuiltinPattern] = &[
     },
     // ── AU/NZ value patterns ──────────────────────────────────────────────────
     BuiltinPattern {
-        // NZ NHI: old AAANNNN (3 alpha not I/O + 4 digits);
-        // new AAANNAY format (3 alpha + 2 digits + 1 alpha not I/O + 1 digit), from Jul-2026
+        // NZ NHI: old AAANNNC (3 alpha not I/O + 3 digits + 1 digit check);
+        // new AAANNAC (3 alpha + 2 digits + 1 alpha not I/O + 1 alpha check), from Jul-2026
         name: "health",
-        regex: r"(?i)\b[a-hj-np-z]{3}(?:\d{4}|\d{2}[a-hj-np-z]\d)\b",
+        regex: r"(?i)\b[a-hj-np-z]{3}(?:\d{4}|\d{2}[a-hj-np-z]{2})\b",
         confidence: 0.85,
     },
     BuiltinPattern {
@@ -667,6 +667,91 @@ impl NzIrd {
             % 11;
         let expected2 = if remainder2 == 0 { 0 } else { 11 - remainder2 };
         expected2 != 10 && expected2 == check_digit
+    }
+}
+
+/// NZ National Health Index (NHI) — check-character validator.
+///
+/// Supports both formats:
+/// - Old (AAANNNC): 3 alpha (no I/O) + 3 digits + 1 numeric check digit; mod-11.
+/// - New (AAANNAC): 3 alpha (no I/O) + 2 digits + 1 alpha (no I/O) + 1 alpha check; mod-23.
+///   New-format numbers start being issued 1 July 2026 (HISO 10046:2024 spec).
+///
+/// Letters use their ordinal position in the alphabet with I and O omitted (A=1 … Z=24).
+/// Weights applied left-to-right across the first 6 characters: [7, 6, 5, 4, 3, 2].
+pub struct NzNhi;
+
+impl NzNhi {
+    // 24-character alphabet with I and O removed, used for new-format check char lookup.
+    const ALPHABET: &'static [u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+    fn char_value(c: char) -> Option<u32> {
+        match c.to_ascii_uppercase() {
+            c @ 'A'..='H' => Some(c as u32 - b'A' as u32 + 1), // A=1..H=8
+            c @ 'J'..='N' => Some(c as u32 - b'A' as u32),     // J=9..N=13 (skip I)
+            c @ 'P'..='Z' => Some(c as u32 - b'A' as u32 - 1), // P=14..Z=24 (skip I,O)
+            c @ '0'..='9' => Some(c as u32 - b'0' as u32),
+            _ => None,
+        }
+    }
+
+    pub fn check(s: &str) -> bool {
+        let s = s.to_ascii_uppercase();
+        let chars: Vec<char> = s.chars().collect();
+        if chars.len() != 7 {
+            return false;
+        }
+        // First 3 must be alpha, not I or O
+        for &c in &chars[..3] {
+            if !c.is_ascii_alphabetic() || c == 'I' || c == 'O' {
+                return false;
+            }
+        }
+        let check_char = chars[6];
+        let old_format = check_char.is_ascii_digit();
+        let new_format = check_char.is_ascii_alphabetic() && check_char != 'I' && check_char != 'O';
+        if !old_format && !new_format {
+            return false;
+        }
+        if old_format {
+            // Chars 4-6 must be digits
+            if !chars[3].is_ascii_digit()
+                || !chars[4].is_ascii_digit()
+                || !chars[5].is_ascii_digit()
+            {
+                return false;
+            }
+        } else {
+            // Chars 4-5 must be digits; char 6 must be alpha not I/O
+            if !chars[3].is_ascii_digit() || !chars[4].is_ascii_digit() {
+                return false;
+            }
+            if !chars[5].is_ascii_alphabetic() || chars[5] == 'I' || chars[5] == 'O' {
+                return false;
+            }
+        }
+        const WEIGHTS: [u32; 6] = [7, 6, 5, 4, 3, 2];
+        let sum: u32 = chars[..6]
+            .iter()
+            .filter_map(|&c| Self::char_value(c))
+            .zip(WEIGHTS.iter())
+            .map(|(v, &w)| v * w)
+            .sum();
+        if old_format {
+            let remainder = sum % 11;
+            let expected = if remainder == 0 { 0 } else { 11 - remainder };
+            if expected == 10 {
+                return false; // structurally invalid NHI
+            }
+            check_char.to_digit(10) == Some(expected)
+        } else {
+            // mod-23; index maps into ALPHABET (1-based)
+            let index = (23 - (sum % 23)) as usize; // range 1–23
+            Self::ALPHABET
+                .get(index - 1)
+                .map(|&b| b as char == check_char)
+                .unwrap_or(false)
+        }
     }
 }
 
@@ -1412,6 +1497,56 @@ mod tests {
     #[test]
     fn nz_ird_rejects_non_digit_chars() {
         assert!(!NzIrd::check("49-0A8-576"));
+    }
+
+    // ── NzNhi ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn nz_nhi_old_format_valid() {
+        // ABD1230: A=1×7+B=2×6+D=4×5+1×4+2×3+3×2 = 7+12+20+4+6+6 = 55; 55 mod 11 = 0 → check = 0
+        assert!(NzNhi::check("ABD1230"));
+    }
+
+    #[test]
+    fn nz_nhi_old_format_lowercase() {
+        assert!(NzNhi::check("abd1230"));
+    }
+
+    #[test]
+    fn nz_nhi_old_format_rejects_wrong_check() {
+        assert!(!NzNhi::check("ABD1231")); // check should be 0, not 1
+    }
+
+    #[test]
+    fn nz_nhi_old_format_rejects_i_o_in_prefix() {
+        assert!(!NzNhi::check("IBD1230")); // I not allowed in prefix
+        assert!(!NzNhi::check("OBD1230")); // O not allowed in prefix
+    }
+
+    #[test]
+    fn nz_nhi_new_format_valid() {
+        // ABD12EK: A=1×7+B=2×6+D=4×5+1×4+2×3+E=5×2 = 7+12+20+4+6+10 = 59
+        // 59 mod 23 = 13; index = 23-13 = 10; ALPHABET[9] = K
+        assert!(NzNhi::check("ABD12EK"));
+    }
+
+    #[test]
+    fn nz_nhi_new_format_rejects_wrong_check() {
+        assert!(!NzNhi::check("ABD12EL")); // check should be K, not L
+    }
+
+    #[test]
+    fn nz_nhi_rejects_wrong_length() {
+        assert!(!NzNhi::check("ABD123")); // 6 chars
+        assert!(!NzNhi::check("ABD12300")); // 8 chars
+    }
+
+    #[test]
+    fn nz_nhi_rejects_i_or_o_as_check_char() {
+        assert!(!NzNhi::check("ABD1231I")); // length 8 — wrong
+                                            // For 7-char: can't naturally get I/O as check — just verify format rejects them
+        assert!(!NzNhi::check("ABD123I")); // check char I not allowed
+        assert!(!NzNhi::check("ABD123O")); // check char O not allowed
     }
 
     #[test]

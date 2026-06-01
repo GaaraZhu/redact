@@ -3,7 +3,9 @@ use std::collections::{BTreeSet, HashMap};
 use serde_json::{Map, Value};
 
 use crate::config::PiiConfig;
-use crate::patterns::{classify_column, AuAbn, AuMedicare, AuTfn, CompiledPattern, Luhn, NzIrd};
+use crate::patterns::{
+    classify_column, AuAbn, AuMedicare, AuTfn, CompiledPattern, Luhn, NzIrd, NzNhi,
+};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -554,6 +556,17 @@ fn scan_string(
             );
         }
         return do_redact("tax_id", &s, config, summary);
+    }
+
+    // 5e. NZ NHI — check-character validation (old mod-11 / new mod-23).
+    if NzNhi::check(&s) {
+        if vb {
+            eprintln!(
+                "[gate] field {:?} → REDACTED (step: nz_nhi, type: health)",
+                kname
+            );
+        }
+        return do_redact("health", &s, config, summary);
     }
 
     // 6. Regex pattern scan. column_name_boost is not applied here: any column
@@ -1563,6 +1576,20 @@ mod tests {
             .unwrap()
             .iter()
             .any(|t| t == "tax_id"));
+    }
+
+    #[test]
+    fn nz_nhi_old_format_in_generic_column_redacted() {
+        let input = json!({"notes": "ABD1230"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["notes"], "[PII:health]");
+    }
+
+    #[test]
+    fn nz_nhi_new_format_in_generic_column_redacted() {
+        let input = json!({"ref": "ABD12EK"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["ref"], "[PII:health]");
     }
 
     // ── 20c. AU/NZ value patterns — JSONB recursion ───────────────────────────
