@@ -216,7 +216,7 @@ Stats are collected by default and written to a local JSONL log on disk — they
 - **Commands not in `tools:`.** The AI can invoke them freely; their output is never inspected.
 - **Non-JSON tool output.** Plain text, CSV, and other formats pass through unchanged. Configure tools to emit JSON.
 - **Encoded or obfuscated PII.** Base64-encoded emails, URL-encoded values, or deliberately spaced strings (`a l i c e @ e x a m p l e . c o m`) are not detected.
-- **Non-US PII by value alone.** The built-in SSN regex requires dashes and the phone pattern is US-centric. Non-US formats rely on column-name matching — extend `pii.column_names` or `pii.patterns` for your region.
+- **Non-US PII by value alone.** The built-in SSN regex requires dashes and the phone pattern is US-centric. AU/NZ identifiers are covered at the value layer: ABN (mod-89 checksum), Medicare (mod-10 checksum), formatted TFN and IRD numbers (mod-11, separators required), NZ NHI (alpha-prefix regex), and NZ bank account numbers. Bare/unformatted TFN and IRD strings without separators are not detected by value alone — column-name matching remains the safety net for those. Other non-AU/NZ formats rely solely on column-name matching — extend `pii.column_names` or `pii.patterns` for your region.
 - **PII already in the model's context** from prior turns, system prompts, file reads, or earlier summarisation. Gate filters what goes *into* the model from configured tools; what's already there stays there.
 - **Tool-side network exfiltration.** If a configured tool sends data to an external service directly (rather than returning it via stdout), gate never sees it.
 - **Write operations.** `INSERT`, `UPDATE`, `DELETE` are not inspected or blocked.

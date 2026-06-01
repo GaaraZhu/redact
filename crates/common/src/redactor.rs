@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use serde_json::{Map, Value};
 
 use crate::config::PiiConfig;
-use crate::patterns::{classify_column, CompiledPattern, Luhn};
+use crate::patterns::{classify_column, AuAbn, AuMedicare, AuTfn, CompiledPattern, Luhn, NzIrd};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -510,6 +510,50 @@ fn scan_string(
             );
         }
         return do_redact("credit_card", &s, config, summary);
+    }
+
+    // 5a. AU ABN — mod-89 checksum-gated (strong enough for bare 11-digit runs).
+    if AuAbn::check(&s) {
+        if vb {
+            eprintln!(
+                "[gate] field {:?} → REDACTED (step: au_abn, type: tax_id)",
+                kname
+            );
+        }
+        return do_redact("tax_id", &s, config, summary);
+    }
+
+    // 5b. AU Medicare — first digit 2–6 + mod-10 checksum.
+    if AuMedicare::check(&s) {
+        if vb {
+            eprintln!(
+                "[gate] field {:?} → REDACTED (step: au_medicare, type: health)",
+                kname
+            );
+        }
+        return do_redact("health", &s, config, summary);
+    }
+
+    // 5c. AU TFN — formatting-gated (NNN NNN NNN / NNN-NNN-NNN) + mod-11 checksum.
+    if AuTfn::check(&s) {
+        if vb {
+            eprintln!(
+                "[gate] field {:?} → REDACTED (step: au_tfn, type: tax_id)",
+                kname
+            );
+        }
+        return do_redact("tax_id", &s, config, summary);
+    }
+
+    // 5d. NZ IRD — formatting-gated (NN-NNN-NNN / NNN-NNN-NNN) + two-pass mod-11 checksum.
+    if NzIrd::check(&s) {
+        if vb {
+            eprintln!(
+                "[gate] field {:?} → REDACTED (step: nz_ird, type: tax_id)",
+                kname
+            );
+        }
+        return do_redact("tax_id", &s, config, summary);
     }
 
     // 6. Regex pattern scan. column_name_boost is not applied here: any column
@@ -1414,5 +1458,110 @@ mod tests {
         // Processed as Object: data array contents are walked as-is (strings in arrays).
         assert_eq!(out["status"], "ok");
         assert_eq!(out["data"][0][0], "a");
+    }
+
+    // ── 20. AU/NZ value patterns — golden corpus ──────────────────────────────
+
+    #[test]
+    fn au_abn_in_generic_column_redacted() {
+        // 53 004 085 616 is a known-valid ABN; generic column name → value-layer catch
+        let input = json!({"external_ref": "53 004 085 616"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["external_ref"], "[PII:tax_id]");
+    }
+
+    #[test]
+    fn au_abn_bare_in_generic_column_redacted() {
+        let input = json!({"field_3": "53004085616"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["field_3"], "[PII:tax_id]");
+    }
+
+    #[test]
+    fn au_medicare_in_generic_column_redacted() {
+        // 2950 98760 1: first digit 2, checksum valid
+        let input = json!({"notes": "2950 98760 1"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["notes"], "[PII:health]");
+    }
+
+    #[test]
+    fn au_tfn_formatted_in_generic_column_redacted() {
+        // 123 456 782: weighted sum 253 = 23*11
+        let input = json!({"comments": "123 456 782"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["comments"], "[PII:tax_id]");
+    }
+
+    #[test]
+    fn au_tfn_bare_not_redacted_by_value_layer() {
+        // Bare 9-digit TFN without separators: formatting-gated, must not redact
+        let input = json!({"comments": "123456782"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["comments"], "123456782");
+    }
+
+    #[test]
+    fn nz_ird_formatted_in_generic_column_redacted() {
+        // 49-098-576: valid 8-digit IRD (two-pass mod-11 check)
+        let input = json!({"ref": "49-098-576"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["ref"], "[PII:tax_id]");
+    }
+
+    #[test]
+    fn nz_ird_bare_not_redacted_by_value_layer() {
+        let input = json!({"ref": "49098576"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["ref"], "49098576");
+    }
+
+    // ── 20b. AU/NZ value patterns — false-positive bounds ────────────────────
+
+    #[test]
+    fn random_9digit_not_redacted() {
+        // 9-digit number that fails TFN checksum and has no separators
+        let input = json!({"order_id": "123456789"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["order_id"], "123456789");
+    }
+
+    #[test]
+    fn random_11digit_not_redacted() {
+        // 11-digit number that fails ABN mod-89 checksum
+        let input = json!({"ref": "12345678901"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["ref"], "12345678901");
+    }
+
+    #[test]
+    fn us_ssn_not_caught_by_au_nz_validators() {
+        // US SSN dashes — TFN validator requires 9 digits, SSN is NNN-NN-NNNN (9 digits)
+        // but 123-45-6789 has the wrong separator structure (2-digit middle group).
+        // The SSN regex (step 6) still catches it.
+        let input = json!({"notes": "123-45-6789"});
+        let out = redact(input, &plan(), &cfg());
+        // SSN pattern fires before AU-TFN; result should still be redacted (as ssn type)
+        assert_eq!(out["notes"], "[PII:ssn]");
+    }
+
+    #[test]
+    fn uuid_not_redacted_by_au_nz_validators() {
+        let input = json!({"id": "19eb1ea0-1d75-4a8e-86bd-0b017af3b3f0"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["id"], "19eb1ea0-1d75-4a8e-86bd-0b017af3b3f0");
+    }
+
+    #[test]
+    fn au_abn_type_label_matches_column_name_path() {
+        // Value-path ABN emits [PII:tax_id], same token as column-name path for "abn"
+        let input = json!({"external_ref": "53004085616"});
+        let out = redact(input, &plan(), &cfg());
+        assert_eq!(out["external_ref"], "[PII:tax_id]");
+        assert!(out["_gate_summary"]["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == "tax_id"));
     }
 }

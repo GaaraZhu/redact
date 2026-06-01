@@ -80,6 +80,44 @@ pub const BUILTIN_PATTERNS: &[BuiltinPattern] = &[
         regex: r"\b\d{13,16}\b",
         confidence: 0.65,
     },
+    // ── AU/NZ value patterns ──────────────────────────────────────────────────
+    BuiltinPattern {
+        // NZ NHI: old AAANNNN (3 alpha not I/O + 4 digits);
+        // new AAANNAY format (3 alpha + 2 digits + 1 alpha not I/O + 1 digit), from Jul-2026
+        name: "health",
+        regex: r"(?i)\b[a-hj-np-z]{3}(?:\d{4}|\d{2}[a-hj-np-z]\d)\b",
+        confidence: 0.85,
+    },
+    BuiltinPattern {
+        // NZ bank account: BB-bbbb-NNNNNNN-SS(S) — 2-4-7-2/3 hyphen-separated groups
+        name: "bank_account",
+        regex: r"\b\d{2}-\d{4}-\d{7}-\d{2,3}\b",
+        confidence: 0.85,
+    },
+    BuiltinPattern {
+        // AU mobile: 04XX XXX XXX / +61 4XX XXX XXX
+        name: "phone",
+        regex: r"\b(?:\+61[\s-]?|0)4\d{2}[\s-]?\d{3}[\s-]?\d{3}\b",
+        confidence: 0.70,
+    },
+    BuiltinPattern {
+        // NZ mobile: 02X XXX XXXX(X) / +64 2X XXX XXXX(X)
+        name: "phone",
+        regex: r"\b(?:\+64[\s-]?|0)2\d[\s-]?\d{3}[\s-]?\d{4,5}\b",
+        confidence: 0.70,
+    },
+    BuiltinPattern {
+        // AU passport: 1-2 letters + 7 digits; NZ passport: 1-2 letters + 6-7 digits
+        name: "passport",
+        regex: r"\b[A-Za-z]{1,2}\d{6,7}\b",
+        confidence: 0.70,
+    },
+    BuiltinPattern {
+        // NZ driver licence: 2 letters + 6 digits (AB123456)
+        name: "license",
+        regex: r"\b[A-Za-z]{2}\d{6}\b",
+        confidence: 0.75,
+    },
 ];
 
 /// Token-to-PII-type synonym table. Single-token entries match bare column tokens;
@@ -471,6 +509,167 @@ impl Luhn {
     }
 }
 
+/// AU Tax File Number — mod-11 weighted checksum.
+/// Weights: [1, 4, 3, 7, 5, 8, 6, 9, 10]; sum must be divisible by 11.
+/// Formatting-gated: bare 9-digit strings are rejected (too many false positives).
+/// Accepts NNN NNN NNN or NNN-NNN-NNN shapes.
+pub struct AuTfn;
+
+impl AuTfn {
+    pub fn check(s: &str) -> bool {
+        if s.chars()
+            .any(|c| !c.is_ascii_digit() && c != ' ' && c != '-')
+        {
+            return false;
+        }
+        let digits: Vec<u32> = s
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .filter_map(|c| c.to_digit(10))
+            .collect();
+        if digits.len() != 9 {
+            return false;
+        }
+        if !s.contains(' ') && !s.contains('-') {
+            return false;
+        }
+        const WEIGHTS: [u32; 9] = [1, 4, 3, 7, 5, 8, 6, 9, 10];
+        let sum: u32 = digits
+            .iter()
+            .zip(WEIGHTS.iter())
+            .map(|(&d, &w)| d * w)
+            .sum();
+        sum.is_multiple_of(11)
+    }
+}
+
+/// AU Business Number — mod-89 weighted checksum.
+/// Subtract 1 from the first digit, then apply weights [10,1,3,5,7,9,11,13,15,17,19];
+/// sum must be divisible by 89.
+/// Checksum-gated (like Luhn): the 11-digit mod-89 filter is strong enough for bare runs.
+pub struct AuAbn;
+
+impl AuAbn {
+    pub fn check(s: &str) -> bool {
+        if s.chars()
+            .any(|c| !c.is_ascii_digit() && c != ' ' && c != '-')
+        {
+            return false;
+        }
+        let mut digits: Vec<u32> = s
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .filter_map(|c| c.to_digit(10))
+            .collect();
+        if digits.len() != 11 {
+            return false;
+        }
+        if digits[0] == 0 {
+            return false;
+        }
+        digits[0] -= 1;
+        const WEIGHTS: [u32; 11] = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
+        let sum: u32 = digits
+            .iter()
+            .zip(WEIGHTS.iter())
+            .map(|(&d, &w)| d * w)
+            .sum();
+        sum.is_multiple_of(89)
+    }
+}
+
+/// AU Medicare card number — mod-10 weighted checksum.
+/// Weights [1,3,7,9,1,3,7,9] applied to the first 8 digits; digit 9 is the check digit;
+/// digit 10 is the card-issue number (IRN, not checked). First digit must be 2–6.
+pub struct AuMedicare;
+
+impl AuMedicare {
+    pub fn check(s: &str) -> bool {
+        if s.chars()
+            .any(|c| !c.is_ascii_digit() && c != ' ' && c != '-')
+        {
+            return false;
+        }
+        let digits: Vec<u32> = s
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .filter_map(|c| c.to_digit(10))
+            .collect();
+        if digits.len() != 10 {
+            return false;
+        }
+        if digits[0] < 2 || digits[0] > 6 {
+            return false;
+        }
+        const WEIGHTS: [u32; 8] = [1, 3, 7, 9, 1, 3, 7, 9];
+        let sum: u32 = digits[..8]
+            .iter()
+            .zip(WEIGHTS.iter())
+            .map(|(&d, &w)| d * w)
+            .sum();
+        digits[8] == sum % 10
+    }
+}
+
+/// NZ IRD (Inland Revenue) number — two-pass mod-11 checksum.
+/// 8–9 digits; 8-digit numbers are left-padded to 9 with a leading zero.
+/// Primary weights [3,2,7,6,5,4,3,2] on digits 1–8; check digit is digit 9.
+/// If the primary pass yields remainder 10, fall back to secondary weights [7,4,3,2,5,2,7,6].
+/// Formatting-gated: bare digit strings without separators are rejected.
+/// Accepts NN-NNN-NNN or NNN-NNN-NNN shapes (dashes or spaces).
+pub struct NzIrd;
+
+impl NzIrd {
+    pub fn check(s: &str) -> bool {
+        if s.chars()
+            .any(|c| !c.is_ascii_digit() && c != '-' && c != ' ')
+        {
+            return false;
+        }
+        let digits: Vec<u32> = s
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .filter_map(|c| c.to_digit(10))
+            .collect();
+        if digits.len() < 8 || digits.len() > 9 {
+            return false;
+        }
+        if !s.contains('-') && !s.contains(' ') {
+            return false;
+        }
+        let padded: Vec<u32> = if digits.len() == 8 {
+            let mut v = vec![0u32];
+            v.extend_from_slice(&digits);
+            v
+        } else {
+            digits
+        };
+        let check_digit = padded[8];
+        let base = &padded[..8];
+        const PRIMARY: [u32; 8] = [3, 2, 7, 6, 5, 4, 3, 2];
+        let remainder = base
+            .iter()
+            .zip(PRIMARY.iter())
+            .map(|(&d, &w)| d * w)
+            .sum::<u32>()
+            % 11;
+        let expected = if remainder == 0 { 0 } else { 11 - remainder };
+        if expected != 10 {
+            return expected == check_digit;
+        }
+        // Primary gives 10 — try secondary weights
+        const SECONDARY: [u32; 8] = [7, 4, 3, 2, 5, 2, 7, 6];
+        let remainder2 = base
+            .iter()
+            .zip(SECONDARY.iter())
+            .map(|(&d, &w)| d * w)
+            .sum::<u32>()
+            % 11;
+        let expected2 = if remainder2 == 0 { 0 } else { 11 - remainder2 };
+        expected2 != 10 && expected2 == check_digit
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,13 +684,22 @@ mod tests {
     // --- CompiledPattern::from_builtins ---
 
     #[test]
-    fn all_four_builtins_present() {
+    fn all_builtins_present() {
         let patterns = CompiledPattern::from_builtins();
         let names: Vec<&str> = patterns.iter().map(|p| p.name.as_str()).collect();
-        for expected in &["email", "ssn", "phone", "credit_card"] {
+        for expected in &[
+            "email",
+            "ssn",
+            "phone",
+            "credit_card",
+            "health",
+            "bank_account",
+            "passport",
+            "license",
+        ] {
             assert!(names.contains(expected), "missing builtin: {}", expected);
         }
-        assert_eq!(patterns.len(), 4);
+        assert_eq!(patterns.len(), 10);
     }
 
     #[test]
@@ -1054,6 +1262,156 @@ mod tests {
     #[test]
     fn map_unknown_to_other() {
         assert_eq!(map_to_tier1_category("unknown_type"), "Other");
+    }
+
+    // ── AuTfn ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn au_tfn_valid_formatted_spaces() {
+        // 123 456 782: 1*1+2*4+3*3+4*7+5*5+6*8+7*6+8*9+2*10 = 253 = 23*11
+        assert!(AuTfn::check("123 456 782"));
+    }
+
+    #[test]
+    fn au_tfn_valid_formatted_dashes() {
+        assert!(AuTfn::check("123-456-782"));
+    }
+
+    #[test]
+    fn au_tfn_rejects_bare_digits() {
+        assert!(!AuTfn::check("123456782"));
+    }
+
+    #[test]
+    fn au_tfn_rejects_wrong_checksum() {
+        // Off-by-one in last digit: sum becomes 263, not divisible by 11
+        assert!(!AuTfn::check("123 456 783"));
+    }
+
+    #[test]
+    fn au_tfn_rejects_non_digit_chars() {
+        assert!(!AuTfn::check("12A 456 782"));
+    }
+
+    #[test]
+    fn au_tfn_rejects_wrong_length() {
+        assert!(!AuTfn::check("123 456 78")); // 8 digits
+        assert!(!AuTfn::check("123 456 7823")); // 10 digits
+    }
+
+    // ── AuAbn ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn au_abn_valid_formatted() {
+        // 53 004 085 616: subtract 1 → [4,3,0,0,4,0,8,5,6,1,6]; weighted sum = 445 = 5*89
+        assert!(AuAbn::check("53 004 085 616"));
+    }
+
+    #[test]
+    fn au_abn_valid_bare() {
+        assert!(AuAbn::check("53004085616"));
+    }
+
+    #[test]
+    fn au_abn_valid_dashes() {
+        assert!(AuAbn::check("53-004-085-616"));
+    }
+
+    #[test]
+    fn au_abn_rejects_wrong_checksum() {
+        assert!(!AuAbn::check("53 004 085 617"));
+    }
+
+    #[test]
+    fn au_abn_rejects_zero_first_digit() {
+        assert!(!AuAbn::check("03 004 085 616"));
+    }
+
+    #[test]
+    fn au_abn_rejects_wrong_length() {
+        assert!(!AuAbn::check("5300408561")); // 10 digits
+    }
+
+    #[test]
+    fn au_abn_rejects_non_digit_chars() {
+        assert!(!AuAbn::check("5X 004 085 616"));
+    }
+
+    // ── AuMedicare ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn au_medicare_valid_bare() {
+        // First 8: [2,9,5,0,9,8,7,6]; weights [1,3,7,9,1,3,7,9]; sum=200; check=0; IRN=1
+        assert!(AuMedicare::check("2950987601"));
+    }
+
+    #[test]
+    fn au_medicare_valid_formatted() {
+        assert!(AuMedicare::check("2950 98760 1"));
+    }
+
+    #[test]
+    fn au_medicare_rejects_wrong_check_digit() {
+        // check digit is index 8; changing it from 0 to 1 makes it invalid
+        assert!(!AuMedicare::check("2950987611"));
+    }
+
+    #[test]
+    fn au_medicare_rejects_first_digit_out_of_range() {
+        assert!(!AuMedicare::check("1950987601")); // first digit 1
+        assert!(!AuMedicare::check("7950987601")); // first digit 7
+    }
+
+    #[test]
+    fn au_medicare_rejects_wrong_length() {
+        assert!(!AuMedicare::check("295098760")); // 9 digits
+        assert!(!AuMedicare::check("29509876011")); // 11 digits
+    }
+
+    #[test]
+    fn au_medicare_rejects_non_digit_chars() {
+        assert!(!AuMedicare::check("2950A87601"));
+    }
+
+    // ── NzIrd ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn nz_ird_valid_8digit_dashes() {
+        // 49098576: padded → [0,4,9,0,9,8,5,7,6]; primary gives expected=10; secondary gives 6 ✓
+        assert!(NzIrd::check("49-098-576"));
+    }
+
+    #[test]
+    fn nz_ird_valid_8digit_spaces() {
+        assert!(NzIrd::check("49 098 576"));
+    }
+
+    #[test]
+    fn nz_ird_valid_9digit_dashes() {
+        // 136410132: primary gives expected=10; secondary gives 2 ✓
+        assert!(NzIrd::check("136-410-132"));
+    }
+
+    #[test]
+    fn nz_ird_rejects_bare_digits() {
+        assert!(!NzIrd::check("49098576"));
+        assert!(!NzIrd::check("136410132"));
+    }
+
+    #[test]
+    fn nz_ird_rejects_wrong_checksum() {
+        assert!(!NzIrd::check("49-098-577")); // last digit off by one
+    }
+
+    #[test]
+    fn nz_ird_rejects_wrong_length() {
+        assert!(!NzIrd::check("490-985")); // 7 digits
+        assert!(!NzIrd::check("490-985-761")); // 10 digits
+    }
+
+    #[test]
+    fn nz_ird_rejects_non_digit_chars() {
+        assert!(!NzIrd::check("49-0A8-576"));
     }
 
     #[test]
