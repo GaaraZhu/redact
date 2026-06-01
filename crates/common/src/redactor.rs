@@ -1564,4 +1564,38 @@ mod tests {
             .iter()
             .any(|t| t == "tax_id"));
     }
+
+    // ── 20c. AU/NZ value patterns — JSONB recursion ───────────────────────────
+
+    #[test]
+    fn au_tfn_inside_jsonb_blob_redacted() {
+        // A jsonb column arrives as a JSON-encoded string; step 4 recurses into it.
+        let blob = r#"{"tfn": "123 456 782", "name": "Alice"}"#;
+        let input = json!({"notes": blob});
+        let out = redact(input, &plan(), &cfg());
+        let inner: serde_json::Value =
+            serde_json::from_str(out["notes"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["tfn"], "[PII:tax_id]");
+        assert_eq!(inner["name"], "Alice");
+    }
+
+    #[test]
+    fn au_tfn_inside_jsonb_blob_idempotent() {
+        // Second pass over already-redacted blob must not double-redact or corrupt.
+        let blob = r#"{"tfn": "123 456 782", "name": "Alice"}"#;
+        let input = json!({"notes": blob});
+        let first = redact(input, &plan(), &cfg());
+        let second = redact(first.clone(), &plan(), &cfg());
+        assert_eq!(first["notes"], second["notes"]);
+    }
+
+    #[test]
+    fn au_abn_inside_jsonb_blob_redacted() {
+        let blob = r#"{"business_ref": "53004085616"}"#;
+        let input = json!({"metadata": blob});
+        let out = redact(input, &plan(), &cfg());
+        let inner: serde_json::Value =
+            serde_json::from_str(out["metadata"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["business_ref"], "[PII:tax_id]");
+    }
 }
